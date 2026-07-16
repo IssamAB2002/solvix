@@ -1,0 +1,129 @@
+services:
+  # PostgreSQL Database
+  db:
+    image: postgres:16-alpine
+    container_name: ecomauto_db
+    restart: always
+    env_file: .env.db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ecomauto"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis Cache & Message Broker
+  redis:
+    image: redis:7-alpine
+    container_name: ecomauto_redis
+    restart: always
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Django Backend (Gunicorn)
+  web:
+    build:
+      context: ./e-commerc-automation-registration-platform/backend
+      dockerfile: Dockerfile
+    container_name: ecomauto_web
+    restart: always
+    env_file: ./e-commerc-automation-registration-platform/backend/.env
+    command: >
+      sh -c "python manage.py migrate &&
+             python manage.py collectstatic --noinput &&
+             gunicorn backend.wsgi --workers 3 --bind 0.0.0.0:8000 --timeout 120"
+    volumes:
+      - static_files:/app/staticfiles
+      - media_files:/app/media
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - internal
+      - proxy
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Celery Worker
+  worker:
+    build:
+      context: ./e-commerc-automation-registration-platform/backend
+      dockerfile: Dockerfile
+    container_name: ecomauto_worker
+    restart: always
+    env_file: ./e-commerc-automation-registration-platform/backend/.env
+    command: celery -A backend worker --loglevel=info --concurrency=2
+    depends_on:
+      - db
+      - redis
+      - web
+    networks:
+      - internal
+
+  # Celery Beat (Scheduler)
+  beat:
+    build:
+      context: ./e-commerc-automation-registration-platform/backend
+      dockerfile: Dockerfile
+    container_name: ecomauto_beat
+    restart: always
+    env_file: ./e-commerc-automation-registration-platform/backend/.env
+    command: celery -A backend beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    depends_on:
+      - db
+      - redis
+      - web
+    networks:
+      - internal
+
+  # Caddy Reverse Proxy + HTTPS
+  caddy:
+    image: caddy:alpine
+    container_name: ecomauto_caddy
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./e-commerc-automation-registration-platform/frontend/dist:/srv/frontend:ro
+      - /srv/solvix/frontend/dist:/srv/solvix-frontend:ro
+      - static_files:/srv/static:ro
+      - media_files:/srv/media:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - internal
+      - proxy
+    depends_on:
+      - web
+
+volumes:
+  postgres_data:
+  static_files:
+  media_files:
+  caddy_data:
+  caddy_config:
+
+networks:
+  internal:
+    driver: bridge
+  proxy:
+    external: true

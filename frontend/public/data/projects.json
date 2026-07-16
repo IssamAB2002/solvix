@@ -1,0 +1,20 @@
+[
+  {
+    "id": "ecommerce",
+    "key": "ecommerce",
+    "emoji": "🛒",
+    "bg": "linear-gradient(135deg,#1a1a2e,#16213e)"
+  },
+  {
+    "id": "management",
+    "key": "management",
+    "emoji": "📊",
+    "bg": "linear-gradient(135deg,#0f3460,#533483)"
+  },
+  {
+    "id": "ai",
+    "key": "ai",
+    "emoji": "🤖",
+    "bg": "linear-gradient(135deg,#12002f,#3d0066)"
+  }
+]

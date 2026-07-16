@@ -1,0 +1,53 @@
+# Django API
+api.ecom-auto-ai.org {
+    # Django static files
+    handle /static/* {
+        root * /srv
+        file_server
+    }
+
+    # Media uploads
+    handle /media/* {
+        root * /srv
+        file_server
+    }
+
+    # Everything else → Gunicorn
+    reverse_proxy web:8000
+}
+
+# React SPA
+app.ecom-auto-ai.org {
+    root * /srv/frontend
+    file_server
+    # SPA fallback: unknown paths → index.html (React Router handles them)
+    try_files {path} /index.html
+}
+
+# n8n (separate stack, same proxy network)
+n8n.ecom-auto-ai.org {
+    reverse_proxy n8n:5678
+}
+
+modeline.online, www.modeline.online {
+    reverse_proxy modeline_edge:80
+    encode gzip
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+    }
+}
+
+# Solvix (separate stack in /srv/solvix, same proxy network)
+solvix-app.online, www.solvix-app.online {
+    encode gzip
+
+    handle /api/* {
+        reverse_proxy solvix-backend:4000
+    }
+
+    handle {
+        root * /srv/solvix-frontend
+        file_server
+        try_files {path} /index.html
+    }
+}

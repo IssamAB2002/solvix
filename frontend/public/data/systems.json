@@ -1,0 +1,62 @@
+[
+  {
+    "key": "erp",
+    "icon": "🏢",
+    "name": { "ar": "أنظمة ERP", "en": "ERP Systems", "fr": "Systèmes ERP" },
+    "desc": {
+      "ar": "إدارة موارد شركتك بالكامل: المخزون، الفواتير، الموظفون والمحاسبة.",
+      "en": "Manage your whole company: inventory, invoicing, staff and accounting.",
+      "fr": "Gérez toute votre entreprise : stocks, facturation, personnel et comptabilité."
+    }
+  },
+  {
+    "key": "crm",
+    "icon": "🤝",
+    "name": { "ar": "أنظمة CRM", "en": "CRM Systems", "fr": "Systèmes CRM" },
+    "desc": {
+      "ar": "تتبع عملاءك، مبيعاتك وتواصلك في لوحة واحدة.",
+      "en": "Track your clients, sales and communication in one dashboard.",
+      "fr": "Suivez vos clients, ventes et échanges dans un seul tableau de bord."
+    }
+  },
+  {
+    "key": "shipping",
+    "icon": "🚚",
+    "name": { "ar": "أنظمة الشحن والتوصيل", "en": "Shipping Systems", "fr": "Systèmes de livraison" },
+    "desc": {
+      "ar": "إدارة الطرود، السائقين وتتبع الشحنات لحظياً.",
+      "en": "Manage parcels, drivers and live shipment tracking.",
+      "fr": "Gérez colis, chauffeurs et suivi des expéditions en temps réel."
+    }
+  },
+  {
+    "key": "carrental",
+    "icon": "🚗",
+    "name": { "ar": "أنظمة كراء السيارات", "en": "Car Renting Systems", "fr": "Systèmes de location de voitures" },
+    "desc": {
+      "ar": "حجوزات، عقود، وجدولة الأسطول في نظام واحد.",
+      "en": "Bookings, contracts and fleet scheduling in one system.",
+      "fr": "Réservations, contrats et gestion de flotte dans un seul système."
+    }
+  },
+  {
+    "key": "mechanic",
+    "icon": "🔧",
+    "name": { "ar": "مساعد الميكانيكي الذكي", "en": "Mechanic AI Assistant", "fr": "Assistant IA pour mécaniciens" },
+    "desc": {
+      "ar": "تشخيص الأعطال بالذكاء الاصطناعي وإدارة الورشة وقطع الغيار.",
+      "en": "AI-powered fault diagnosis plus workshop and parts management.",
+      "fr": "Diagnostic des pannes par IA, gestion d'atelier et des pièces."
+    }
+  },
+  {
+    "key": "custom",
+    "icon": "💡",
+    "name": { "ar": "نظام مخصص لمجالك", "en": "A System For Your Field", "fr": "Un système pour votre domaine" },
+    "desc": {
+      "ar": "مهما كان مجالك — نحلل مشكلتك ونبني النظام الذي يحلها.",
+      "en": "Whatever your field — we analyze your problem and build the system that solves it.",
+      "fr": "Quel que soit votre domaine — nous analysons votre problème et créons le système qui le résout."
+    }
+  }
+]

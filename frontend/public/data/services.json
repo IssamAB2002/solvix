@@ -1,0 +1,72 @@
+[
+  {
+    "key": "web",
+    "icon": "🌐",
+    "name": {
+      "ar": "مواقع الويب",
+      "en": "Websites",
+      "fr": "Sites web"
+    },
+    "desc": {
+      "ar": "مواقع سريعة وآمنة بتقنيات حديثة، من صفحات التعريف إلى المنصات الكاملة.",
+      "en": "Fast, secure websites with modern technologies — from landing pages to full platforms.",
+      "fr": "Sites rapides et sécurisés avec des technologies modernes — de la page vitrine à la plateforme complète."
+    }
+  },
+  {
+    "key": "mobile",
+    "icon": "📱",
+    "name": {
+      "ar": "تطبيقات الجوال",
+      "en": "Mobile Apps",
+      "fr": "Applications mobiles"
+    },
+    "desc": {
+      "ar": "تطبيقات iOS و Android بأعلى معايير الأداء.",
+      "en": "iOS & Android apps with top performance.",
+      "fr": "Applications iOS et Android avec des performances optimales."
+    }
+  },
+  {
+    "key": "desktop",
+    "icon": "🖥️",
+    "name": {
+      "ar": "تطبيقات سطح المكتب",
+      "en": "Desktop Apps",
+      "fr": "Applications de bureau"
+    },
+    "desc": {
+      "ar": "برامج مكتبية قوية لإدارة عملك على Windows و macOS و Linux.",
+      "en": "Powerful desktop software for your business on Windows, macOS and Linux.",
+      "fr": "Logiciels de bureau puissants pour votre entreprise sur Windows, macOS et Linux."
+    }
+  },
+  {
+    "key": "ai",
+    "icon": "🤖",
+    "name": {
+      "ar": "تطبيقات مدمجة بالذكاء الاصطناعي",
+      "en": "AI Integrated Apps",
+      "fr": "Applications intégrant l'IA"
+    },
+    "desc": {
+      "ar": "تطبيقات ذكية: أتمتة، مساعدون افتراضيون وتحليل بيانات متقدم.",
+      "en": "Smart applications: automation, virtual assistants and advanced analytics.",
+      "fr": "Applications intelligentes : automatisation, assistants virtuels et analyses avancées."
+    }
+  },
+  {
+    "key": "combo",
+    "icon": "🧩",
+    "name": {
+      "ar": "حلول مدمجة حسب حاجتك",
+      "en": "Combined Solutions",
+      "fr": "Solutions combinées"
+    },
+    "desc": {
+      "ar": "ندمج الأنواع حسب حاجة عملك: موقع + تطبيق جوال، سطح مكتب + ذكاء اصطناعي... وغيرها.",
+      "en": "We combine types around your needs: Website + Mobile App, Desktop + AI Integrated App... and more.",
+      "fr": "Nous combinons selon vos besoins : Site web + App mobile, Bureau + IA... et plus encore."
+    }
+  }
+]
