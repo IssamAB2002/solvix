@@ -62,6 +62,7 @@ const requestSchema = new mongoose.Schema(
     budget: String,
     currency: { type: String, default: 'dzd' },
     note: String,
+    files: [{ name: String, type: String, data: String }],
     status: { type: String, default: 'pending' },
     createdAt: { type: Date, default: Date.now },
   },
@@ -250,6 +251,7 @@ export async function initDb() {
         budget TEXT DEFAULT '',
         currency TEXT NOT NULL DEFAULT 'dzd',
         note TEXT DEFAULT '',
+        files TEXT DEFAULT '[]',
         status TEXT NOT NULL DEFAULT 'pending',
         created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
       );
@@ -344,6 +346,7 @@ export async function initDb() {
         budget TEXT DEFAULT '',
         currency TEXT NOT NULL DEFAULT 'dzd',
         note TEXT DEFAULT '',
+        files TEXT DEFAULT '[]',
         status TEXT NOT NULL DEFAULT 'pending',
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
@@ -393,6 +396,7 @@ async function migrate() {
   if (IS_PG) {
     await pgPool.query(`ALTER TABLE requests ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending'`);
     await pgPool.query(`ALTER TABLE requests ADD COLUMN IF NOT EXISTS currency TEXT NOT NULL DEFAULT 'dzd'`);
+    await pgPool.query(`ALTER TABLE requests ADD COLUMN IF NOT EXISTS files TEXT DEFAULT '[]'`);
     await pgPool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS created_by TEXT DEFAULT ''`);
     await pgPool.query(`ALTER TABLE payments ADD COLUMN IF NOT EXISTS created_by TEXT DEFAULT ''`);
   } else {
@@ -401,6 +405,9 @@ async function migrate() {
     } catch { /* column already exists */ }
     try {
       await sqliteDb.exec(`ALTER TABLE requests ADD COLUMN currency TEXT NOT NULL DEFAULT 'dzd'`);
+    } catch { /* column already exists */ }
+    try {
+      await sqliteDb.exec(`ALTER TABLE requests ADD COLUMN files TEXT DEFAULT '[]'`);
     } catch { /* column already exists */ }
     try {
       await sqliteDb.exec(`ALTER TABLE orders ADD COLUMN created_by TEXT DEFAULT ''`);
@@ -624,14 +631,14 @@ export async function listPayments() {
 }
 
 // ── Requests (leads from the public form) ─────────────────────────────────────
-export async function createRequest({ name, email = '', phone = '', projectType = '', goal = '', budget = '', currency = 'dzd', note = '' }) {
+export async function createRequest({ name, email = '', phone = '', projectType = '', goal = '', budget = '', currency = 'dzd', note = '', files = [] }) {
   if (IS_MONGO) {
-    const saved = await new RequestModel({ name, email, phone, projectType, goal, budget, currency, note }).save();
+    const saved = await new RequestModel({ name, email, phone, projectType, goal, budget, currency, note, files }).save();
     return { id: saved._id.toString() };
   }
   const id = await insert(
-    'INSERT INTO requests (name, email, phone, project_type, goal, budget, currency, note) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
-    [name, email, phone, projectType, goal, budget, currency, note]
+    'INSERT INTO requests (name, email, phone, project_type, goal, budget, currency, note, files) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
+    [name, email, phone, projectType, goal, budget, currency, note, JSON.stringify(files)]
   );
   return { id };
 }
@@ -642,12 +649,14 @@ function mapRequest(r) {
     return {
       id: r._id.toString(), name: r.name, email: r.email, phone: r.phone,
       projectType: r.projectType, goal: r.goal, budget: r.budget, currency: r.currency || 'dzd', note: r.note,
+      files: r.files || [],
       status: r.status || 'pending', createdAt: r.createdAt,
     };
   }
   return {
     id: r.id, name: r.name, email: r.email, phone: r.phone,
     projectType: r.project_type, goal: r.goal, budget: r.budget, currency: r.currency || 'dzd', note: r.note,
+    files: JSON.parse(r.files || '[]'),
     status: r.status || 'pending', createdAt: r.created_at,
   };
 }

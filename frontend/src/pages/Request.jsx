@@ -1,6 +1,6 @@
 // ─── REQUEST PAGE ────────────────────────────────────────────────────────────
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import C from "../styles/colors";
 import { Btn } from "../components/UI";
 import { REQ_STEPS } from "../data";
@@ -15,6 +15,7 @@ export default function Request({ go, lang, currency = "dzd" }) {
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [note,  setNote]  = useState("");
+  const [files, setFiles] = useState([]); // [{ name, type, data }]
   const [sent,  setSent]  = useState(false);
   const [error, setError] = useState("");
   const [sending, setSending] = useState(false);
@@ -42,6 +43,7 @@ export default function Request({ go, lang, currency = "dzd" }) {
           goal: ans[1] || "",
           budget: ans[2] || "",
           currency,
+          files,
         },
       });
       setSent(true);
@@ -80,7 +82,7 @@ export default function Request({ go, lang, currency = "dzd" }) {
         />
       )}
 
-      {step === 3 && <FileStep lang={lang}/>}
+      {step === 3 && <FileStep lang={lang} files={files} setFiles={setFiles}/>}
 
       {step === 4 && (
         <ContactStep
@@ -156,16 +158,69 @@ function OptionStep({ stepIndex, ans, setAns, details, setDetails, lang, currenc
   );
 }
 
-function FileStep({ lang }) {
+const MAX_FILES = 3;
+const MAX_FILE_BYTES = 4 * 1024 * 1024; // 4MB
+
+function FileStep({ lang, files, setFiles }) {
+  const [error, setError] = useState("");
+  const inputRef = useRef(null);
+
+  const onPick = async (e) => {
+    const picked = Array.from(e.target.files || []);
+    e.target.value = ""; // allow re-picking the same file after removal
+    if (!picked.length) return;
+    setError("");
+
+    if (files.length + picked.length > MAX_FILES) {
+      setError(t(lang, "request.fileTooMany"));
+      return;
+    }
+    const tooBig = picked.find((f) => f.size > MAX_FILE_BYTES);
+    if (tooBig) {
+      setError(t(lang, "request.fileTooLarge"));
+      return;
+    }
+
+    const read = (file) => new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve({ name: file.name, type: file.type, data: reader.result });
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+
+    try {
+      const loaded = await Promise.all(picked.map(read));
+      setFiles((f) => [...f, ...loaded]);
+    } catch {
+      setError(t(lang, "request.fileTooLarge"));
+    }
+  };
+
+  const removeFile = (name) => setFiles((f) => f.filter((x) => x.name !== name));
+
   return (
     <>
       <StepHeader number={4} title={t(lang, "request.fileStep")} />
-      <div style={{ background: C.surface, border: `2px dashed ${C.border}`, borderRadius: 16, padding: "56px 24px", textAlign: "center", marginBottom: 32 }}>
+      <div onClick={() => inputRef.current?.click()} style={{ background: C.surface, border: `2px dashed ${C.border}`, borderRadius: 16, padding: "56px 24px", textAlign: "center", marginBottom: files.length ? 16 : 32, cursor: "pointer" }}>
         <div style={{ fontSize: 48, marginBottom: 14 }}>📎</div>
         <div style={{ color: C.muted, fontSize: 15, marginBottom: 6 }}>{t(lang, "request.fileDescription")}</div>
         <div style={{ color: C.dim, fontSize: 12, marginBottom: 20 }}>{t(lang, "request.fileHelper")}</div>
         <Btn variant="outline">{t(lang, "request.fileStep")}</Btn>
       </div>
+      <input ref={inputRef} type="file" multiple accept=".pdf,.doc,.docx,image/*" onChange={onPick} style={{ display: "none" }} />
+
+      {error && <div style={{ color: "#F87171", fontSize: 13, marginBottom: 16 }}>{error}</div>}
+
+      {files.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 32 }}>
+          {files.map((f) => (
+            <div key={f.name} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: "10px 14px" }}>
+              <span style={{ color: C.text, fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>📄 {f.name}</span>
+              <button onClick={() => removeFile(f.name)} style={{ background: "none", border: "none", color: C.dim, cursor: "pointer", fontSize: 14, padding: 4 }}>✕</button>
+            </div>
+          ))}
+        </div>
+      )}
     </>
   );
 }

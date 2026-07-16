@@ -12,10 +12,29 @@ const router = express.Router();
 
 const REQUEST_STATUSES = ['pending', 'approved', 'cancelled'];
 
+const MAX_FILES = 3;
+const MAX_FILE_BYTES = 4 * 1024 * 1024; // 4MB raw (base64 data-URI runs ~33% larger)
+
 router.post('/', async (req, res) => {
-  const { name, email, phone, projectType, goal, budget, currency, note } = req.body;
+  const { name, email, phone, projectType, goal, budget, currency, note, files } = req.body;
   if (!name?.trim() || !phone?.trim()) {
     return res.status(400).json({ error: 'الاسم ورقم الهاتف مطلوبان.' });
+  }
+  let safeFiles = [];
+  if (files !== undefined) {
+    if (!Array.isArray(files) || files.length > MAX_FILES) {
+      return res.status(400).json({ error: `يمكن إرفاق ${MAX_FILES} ملفات كحد أقصى.` });
+    }
+    for (const f of files) {
+      if (!f?.name || !f?.data || typeof f.data !== 'string' || !f.data.startsWith('data:')) {
+        return res.status(400).json({ error: 'ملف مرفق غير صالح.' });
+      }
+      const approxBytes = (f.data.length * 3) / 4;
+      if (approxBytes > MAX_FILE_BYTES) {
+        return res.status(400).json({ error: `حجم الملف "${f.name}" يتجاوز الحد المسموح (4MB).` });
+      }
+    }
+    safeFiles = files.map((f) => ({ name: String(f.name).slice(0, 200), type: f.type || '', data: f.data }));
   }
   const created = await createRequest({
     name: name.trim(),
@@ -26,6 +45,7 @@ router.post('/', async (req, res) => {
     budget: budget?.trim() || '',
     currency: currency === 'usd' ? 'usd' : 'dzd',
     note: note?.trim() || '',
+    files: safeFiles,
   });
   res.json({ message: 'تم استلام طلبك.', id: created.id });
 });

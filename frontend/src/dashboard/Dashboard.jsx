@@ -702,7 +702,10 @@ function RequestsTab({ lang, requests, reload }) {
                     <Td>{optLabel("type", r.projectType)}</Td>
                     <Td>{optLabel("goal", r.goal)}</Td>
                     <Td>{optLabel("budget", r.budget, r.currency)}</Td>
-                    <Td style={{ maxWidth: 220, fontSize: 13, color: C.muted, whiteSpace: "pre-line" }}>{r.note || "—"}</Td>
+                    <Td style={{ maxWidth: 220, fontSize: 13, color: C.muted, whiteSpace: "pre-line" }}>
+                      {r.note || "—"}
+                      {r.files?.length > 0 && <div style={{ marginTop: 4, fontSize: 12, color: C.accent }}>📎 {r.files.length}</div>}
+                    </Td>
                     <Td style={{ whiteSpace: "nowrap", fontSize: 13, color: C.muted }}>{fmtDate(r.createdAt)}</Td>
                     <Td><Badge label={t(lang, `dashboard.requestStatus.${status}`)} color={REQUEST_STATUS_COLORS[status] || C.accent} /></Td>
                     <Td style={{ whiteSpace: "nowrap" }}>
@@ -771,6 +774,19 @@ function ApproveRequestModal({ lang, request, optLabel, onClose, onApproved }) {
           {request.phone && <> · 📞 <span style={{ direction: "ltr", unicodeBidi: "embed" }}>{request.phone}</span></>}
           {request.email && <> · ✉️ {request.email}</>}
         </div>
+
+        {request.files?.length > 0 && (
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 13, color: C.muted, marginBottom: 6 }}>{t(lang, "dashboard.requestActions.attachments")}</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {request.files.map((f) => (
+                <a key={f.name} href={f.data} download={f.name} style={{ fontSize: 13, color: C.accent, textDecoration: "none" }}>
+                  📎 {f.name}
+                </a>
+              ))}
+            </div>
+          </div>
+        )}
 
         <label style={{ fontSize: 13, color: C.muted, display: "block", marginBottom: 6 }}>{t(lang, "dashboard.orderForm.projectType")}</label>
         <input value={projectType} onChange={(e) => setProjectType(e.target.value)} style={{ ...inputStyle, marginBottom: 14 }} />
