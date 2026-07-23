@@ -308,7 +308,7 @@ function TeamTab({ lang, currentUserId }) {
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
               <tr>
-                {["name", "email", "role", "status", "actions"].map((f) => (
+                {["name", "email", "phone", "role", "status", "actions"].map((f) => (
                   <Th key={f} lang={lang}>{t(lang, `dashboard.team.table.${f}`)}</Th>
                 ))}
               </tr>
@@ -318,6 +318,7 @@ function TeamTab({ lang, currentUserId }) {
                 <tr key={member.id}>
                   <Td style={{ color: "#fff", fontWeight: 600 }}>{member.name}</Td>
                   <Td style={{ direction: "ltr", textAlign: lang === "ar" ? "right" : "left" }}>{member.email}</Td>
+                  <Td style={{ direction: "ltr", textAlign: lang === "ar" ? "right" : "left" }}>{member.phone || "—"}</Td>
                   <Td><Badge label={t(lang, `dashboard.roles.${member.role}`)} color={member.role === "ceo" ? C.accent : member.role === "admin" ? "#F59E0B" : C.muted} /></Td>
                   <Td style={{ fontSize: 13, color: member.mustChangePassword ? C.yellow : C.muted }}>
                     {member.mustChangePassword ? t(lang, "dashboard.team.pendingFirstLogin") : t(lang, "dashboard.team.active")}
@@ -343,6 +344,7 @@ function TeamTab({ lang, currentUserId }) {
 function StaffForm({ lang, onCreated }) {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState("developer");
   const [error, setError] = useState("");
@@ -356,7 +358,7 @@ function StaffForm({ lang, onCreated }) {
     setSaving(true);
     setError("");
     try {
-      await api("/auth/staff", { method: "POST", body: { name: name.trim(), email: email.trim(), password, role } });
+      await api("/auth/staff", { method: "POST", body: { name: name.trim(), email: email.trim(), phone: phone.trim(), password, role } });
       onCreated({ name: name.trim(), email: email.trim(), password });
     } catch (err) {
       setError(err.status ? err.message : t(lang, "auth.connectionError"));
@@ -373,6 +375,9 @@ function StaffForm({ lang, onCreated }) {
 
       <label style={{ fontSize: 13, color: C.muted, display: "block", marginBottom: 6 }}>{t(lang, "auth.email")}</label>
       <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} style={{ ...inputStyle, marginBottom: 14 }} />
+
+      <label style={{ fontSize: 13, color: C.muted, display: "block", marginBottom: 6 }}>{t(lang, "dashboard.team.form.phone")}</label>
+      <input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} style={{ ...inputStyle, marginBottom: 14, direction: "ltr" }} />
 
       <label style={{ fontSize: 13, color: C.muted, display: "block", marginBottom: 6 }}>{t(lang, "dashboard.team.form.initialPassword")}</label>
       <input type="text" value={password} onChange={(e) => setPassword(e.target.value)} style={{ ...inputStyle, marginBottom: 14 }} />

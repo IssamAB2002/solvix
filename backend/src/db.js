@@ -25,6 +25,7 @@ const userSchema = new mongoose.Schema(
   {
     name: { type: String, required: true },
     email: { type: String, required: true, unique: true },
+    phone: { type: String, default: '' },
     password: { type: String, required: true },
     role: { type: String, default: null },
     mustChangePassword: { type: Boolean, default: false },
@@ -155,9 +156,9 @@ async function insert(text, params = []) {
 function mapUser(row) {
   if (!row) return null;
   if (row._id) {
-    return { id: row._id.toString(), name: row.name, email: row.email, password: row.password, role: row.role ?? null, mustChangePassword: !!row.mustChangePassword };
+    return { id: row._id.toString(), name: row.name, email: row.email, phone: row.phone || '', password: row.password, role: row.role ?? null, mustChangePassword: !!row.mustChangePassword };
   }
-  return { id: row.id, name: row.name, email: row.email, password: row.password, role: row.role ?? null, mustChangePassword: !!row.must_change_password };
+  return { id: row.id, name: row.name, email: row.email, phone: row.phone || '', password: row.password, role: row.role ?? null, mustChangePassword: !!row.must_change_password };
 }
 
 function mapOrder(row) {
@@ -211,6 +212,7 @@ export async function initDb() {
         id SERIAL PRIMARY KEY,
         name TEXT NOT NULL,
         email TEXT NOT NULL UNIQUE,
+        phone TEXT DEFAULT '',
         password TEXT NOT NULL,
         role TEXT,
         must_change_password BOOLEAN NOT NULL DEFAULT FALSE,
@@ -309,6 +311,7 @@ export async function initDb() {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
         email TEXT NOT NULL UNIQUE,
+        phone TEXT DEFAULT '',
         password TEXT NOT NULL,
         role TEXT,
         must_change_password INTEGER NOT NULL DEFAULT 0,
@@ -416,6 +419,7 @@ async function migrate() {
     await pgPool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'new'`);
     await pgPool.query(`ALTER TABLE payments ADD COLUMN IF NOT EXISTS created_by TEXT DEFAULT ''`);
     await pgPool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE`);
+    await pgPool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT DEFAULT ''`);
   } else {
     try {
       await sqliteDb.exec(`ALTER TABLE requests ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'`);
@@ -440,6 +444,9 @@ async function migrate() {
     } catch { /* column already exists */ }
     try {
       await sqliteDb.exec(`ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0`);
+    } catch { /* column already exists */ }
+    try {
+      await sqliteDb.exec(`ALTER TABLE users ADD COLUMN phone TEXT DEFAULT ''`);
     } catch { /* column already exists */ }
   }
   await run(`UPDATE orders SET status = 'deployment' WHERE status = 'delivery'`);
@@ -466,24 +473,24 @@ async function seedAdmin() {
 // ── Users (staff) ─────────────────────────────────────────────────────────────
 export async function findUserByEmail(email) {
   if (IS_MONGO) return mapUser(await UserModel.findOne({ email }).lean());
-  return mapUser(await get('SELECT id, name, email, password, role, must_change_password FROM users WHERE email = $1', [email]));
+  return mapUser(await get('SELECT id, name, email, phone, password, role, must_change_password FROM users WHERE email = $1', [email]));
 }
 
 export async function findUserById(id) {
   if (IS_MONGO) return mapUser(await UserModel.findById(id).lean());
-  return mapUser(await get('SELECT id, name, email, password, role, must_change_password FROM users WHERE id = $1', [id]));
+  return mapUser(await get('SELECT id, name, email, phone, password, role, must_change_password FROM users WHERE id = $1', [id]));
 }
 
-export async function createUser({ name, email, password, role = null, mustChangePassword = false }) {
+export async function createUser({ name, email, phone = '', password, role = null, mustChangePassword = false }) {
   if (IS_MONGO) {
-    const saved = await new UserModel({ name, email, password, role, mustChangePassword }).save();
+    const saved = await new UserModel({ name, email, phone, password, role, mustChangePassword }).save();
     return mapUser(saved.toObject());
   }
   const id = await insert(
-    'INSERT INTO users (name, email, password, role, must_change_password) VALUES ($1, $2, $3, $4, $5)',
-    [name, email, password, role, mustChangePassword]
+    'INSERT INTO users (name, email, phone, password, role, must_change_password) VALUES ($1, $2, $3, $4, $5, $6)',
+    [name, email, phone, password, role, mustChangePassword]
   );
-  return { id, name, email, role, mustChangePassword };
+  return { id, name, email, phone, role, mustChangePassword };
 }
 
 export async function setUserRole(id, role) {
@@ -499,10 +506,10 @@ export async function updateUserPassword(id, hashedPassword, mustChangePassword)
 export async function listStaff() {
   if (IS_MONGO) {
     const docs = await UserModel.find({ role: { $in: ['ceo', 'admin', 'developer'] } }).lean();
-    return docs.map((d) => ({ id: d._id.toString(), name: d.name, email: d.email, role: d.role, mustChangePassword: !!d.mustChangePassword }));
+    return docs.map((d) => ({ id: d._id.toString(), name: d.name, email: d.email, phone: d.phone || '', role: d.role, mustChangePassword: !!d.mustChangePassword }));
   }
-  const rows = await all("SELECT id, name, email, role, must_change_password FROM users WHERE role IN ('ceo','admin','developer') ORDER BY id", []);
-  return rows.map((r) => ({ id: r.id, name: r.name, email: r.email, role: r.role, mustChangePassword: !!r.must_change_password }));
+  const rows = await all("SELECT id, name, email, phone, role, must_change_password FROM users WHERE role IN ('ceo','admin','developer') ORDER BY id", []);
+  return rows.map((r) => ({ id: r.id, name: r.name, email: r.email, phone: r.phone || '', role: r.role, mustChangePassword: !!r.must_change_password }));
 }
 
 export async function deleteUserById(id) {

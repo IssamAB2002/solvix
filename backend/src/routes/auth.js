@@ -106,7 +106,7 @@ router.get('/staff', requireCeo, async (_req, res) => {
 });
 
 router.post('/staff', requireCeo, async (req, res) => {
-  const { name, email, password, role = 'developer' } = req.body;
+  const { name, email, phone, password, role = 'developer' } = req.body;
   if (!name || !email || !password) {
     return res.status(400).json({ error: 'الرجاء تعبئة جميع الحقول.' });
   }
@@ -118,8 +118,8 @@ router.post('/staff', requireCeo, async (req, res) => {
     return res.status(409).json({ error: 'البريد الإلكتروني مستخدم بالفعل.' });
   }
   const hashed = await bcrypt.hash(password, 10);
-  const user = await createUser({ name, email, password: hashed, role, mustChangePassword: true });
-  res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role, mustChangePassword: true } });
+  const user = await createUser({ name, email, phone: phone?.trim() || '', password: hashed, role, mustChangePassword: true });
+  res.json({ user: { id: user.id, name: user.name, email: user.email, phone: user.phone, role: user.role, mustChangePassword: true } });
 });
 
 // CEO resets a staff member's password (forces them to change it on next login).
