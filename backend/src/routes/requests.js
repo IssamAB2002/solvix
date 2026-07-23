@@ -4,21 +4,25 @@
 
 import express from 'express';
 import crypto from 'crypto';
-import { requireStaff } from './auth.js';
+import { requireStaff, requireAdmin } from './auth.js';
 import { hashKey, generateUid } from './orders.js';
 import { createRequest, listRequests, getRequestById, updateRequestStatus, deleteRequestById, createOrder } from '../db.js';
 
 const router = express.Router();
 
 const REQUEST_STATUSES = ['pending', 'approved', 'cancelled'];
+const REQUEST_KINDS = ['new', 'debugging', 'developing'];
 
 const MAX_FILES = 3;
 const MAX_FILE_BYTES = 4 * 1024 * 1024; // 4MB raw (base64 data-URI runs ~33% larger)
 
 router.post('/', async (req, res) => {
-  const { name, email, phone, projectType, goal, budget, currency, note, files } = req.body;
+  const { name, email, phone, projectType, goal, budget, currency, kind, note, files } = req.body;
   if (!name?.trim() || !phone?.trim()) {
     return res.status(400).json({ error: 'الاسم ورقم الهاتف مطلوبان.' });
+  }
+  if (kind !== undefined && !REQUEST_KINDS.includes(kind)) {
+    return res.status(400).json({ error: 'نوع طلب غير صالح.' });
   }
   let safeFiles = [];
   if (files !== undefined) {
@@ -44,6 +48,7 @@ router.post('/', async (req, res) => {
     goal: goal?.trim() || '',
     budget: budget?.trim() || '',
     currency: currency === 'usd' ? 'usd' : 'dzd',
+    kind: REQUEST_KINDS.includes(kind) ? kind : 'new',
     note: note?.trim() || '',
     files: safeFiles,
   });
@@ -56,7 +61,7 @@ router.get('/', requireStaff, async (_req, res) => {
 
 // Staff: change a request's status (pending ↔ cancelled). Approval goes
 // through /:id/approve because it also creates the project.
-router.put('/:id', requireStaff, async (req, res) => {
+router.put('/:id', requireAdmin, async (req, res) => {
   const existing = await getRequestById(req.params.id);
   if (!existing) return res.status(404).json({ error: 'الطلب غير موجود.' });
 
@@ -70,14 +75,14 @@ router.put('/:id', requireStaff, async (req, res) => {
 
 // Staff: approve a request → creates an order (project + CRM entry) from it
 // and returns the one-time private key for the client.
-router.post('/:id/approve', requireStaff, async (req, res) => {
+router.post('/:id/approve', requireAdmin, async (req, res) => {
   const request = await getRequestById(req.params.id);
   if (!request) return res.status(404).json({ error: 'الطلب غير موجود.' });
   if (request.status === 'approved') {
     return res.status(400).json({ error: 'هذا الطلب مقبول بالفعل.' });
   }
 
-  const { projectType, description, totalBudget } = req.body || {};
+  const { projectType, description, totalBudget, kind } = req.body || {};
   const fallbackDescription = [
     request.goal && `Goal: ${request.goal}`,
     request.budget && `Budget: ${request.budget}`,
@@ -94,6 +99,7 @@ router.post('/:id/approve', requireStaff, async (req, res) => {
     clientEmail: request.email || '',
     projectType: projectType?.trim() || request.projectType || '—',
     description: description?.trim() || fallbackDescription,
+    kind: REQUEST_KINDS.includes(kind) ? kind : (request.kind || 'new'),
     totalBudget: Number(totalBudget) || 0,
     features: [],
     createdBy: req.user.name,
@@ -104,7 +110,7 @@ router.post('/:id/approve', requireStaff, async (req, res) => {
 });
 
 // Staff: permanently delete a request (used for cancelled/declined leads).
-router.delete('/:id', requireStaff, async (req, res) => {
+router.delete('/:id', requireAdmin, async (req, res) => {
   const existing = await getRequestById(req.params.id);
   if (!existing) return res.status(404).json({ error: 'الطلب غير موجود.' });
   await deleteRequestById(req.params.id);

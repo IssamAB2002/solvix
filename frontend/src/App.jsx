@@ -1,5 +1,5 @@
 // ─── APP.JSX ─────────────────────────────────────────────────────────────────
-// نقطة الدخول الرئيسية — الموقع عام للزوار، ولوحة الإدارة على مسار ‎/admin‎ لفريق Solvix فقط
+// نقطة الدخول الرئيسية — الموقع عام للزوار، ولوحة الإدارة على مسار ‎/solvix-dir‎ لفريق Solvix فقط
 
 import { useState, useEffect } from "react";
 
@@ -15,9 +15,10 @@ import Request from "./pages/Request";
 import Track from "./pages/Track";
 import Dashboard from "./dashboard/Dashboard";
 import AdminLogin from "./pages/AdminLogin";
+import ForceChangePassword from "./pages/ForceChangePassword";
 
-const IS_ADMIN_PATH = window.location.pathname.startsWith("/admin");
-const STAFF_ROLES = ["ceo", "developer"];
+const IS_ADMIN_PATH = window.location.pathname.startsWith("/solvix-dir");
+const STAFF_ROLES = ["ceo", "admin", "developer"];
 
 // A direct link to /projects/:slug opens that project's details page straight away.
 const PROJECT_PATH_MATCH = window.location.pathname.match(/^\/projects\/([^/]+)\/?$/);
@@ -60,19 +61,29 @@ export default function App() {
     localStorage.setItem("solvix_user", JSON.stringify(userData));
   };
 
+  const handlePasswordChanged = (userData, token) => {
+    setStaff(userData);
+    localStorage.setItem("solvix_user", JSON.stringify(userData));
+    localStorage.setItem("solvix_token", token);
+  };
+
   const handleStaffLogout = () => {
     setStaff(null);
     localStorage.removeItem("solvix_user");
     localStorage.removeItem("solvix_token");
   };
 
-  // ── Admin area (/admin) — CEO & developers only ─────────────────────────────
+  // ── Admin area (/solvix-dir) — CEO & developers only ────────────────────────
   if (IS_ADMIN_PATH) {
     return (
       <>
         <style>{globalCSS}</style>
         {staff ? (
-          <Dashboard user={staff} lang={lang} setLang={setLang} onLogout={handleStaffLogout} />
+          staff.mustChangePassword ? (
+            <ForceChangePassword user={staff} onChanged={handlePasswordChanged} lang={lang} setLang={setLang} />
+          ) : (
+            <Dashboard user={staff} lang={lang} setLang={setLang} onLogout={handleStaffLogout} />
+          )
         ) : (
           <AdminLogin onLogin={handleStaffLogin} lang={lang} setLang={setLang} />
         )}

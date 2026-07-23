@@ -1,44 +1,38 @@
-// ─── ADMIN LOGIN (/solvix-dir) ────────────────────────────────────────────────
-// Staff sign-in only (CEO & developers). Visitors have no accounts.
+// ─── FORCE CHANGE PASSWORD (/solvix-dir) ──────────────────────────────────────
+// Shown instead of the dashboard right after sign-in when the staff account's
+// password was just set (or reset) by the CEO and hasn't been changed yet.
 
 import { useState } from "react";
 import C from "../styles/colors";
 import { t } from "../i18n";
-import { API_BASE } from "../config";
+import { api } from "../api";
 import { LanguageSwitcher } from "../components/UI";
 
-export default function AdminLogin({ onLogin, lang, setLang }) {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+export default function ForceChangePassword({ user, onChanged, lang, setLang }) {
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (event) => {
     event.preventDefault();
-    if (!email || !password) {
+    if (!currentPassword || !newPassword) {
       setError(t(lang, "auth.required"));
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setError(t(lang, "auth.passwordMismatch"));
       return;
     }
 
     setLoading(true);
+    setError("");
     try {
-      const response = await fetch(`${API_BASE}/api/auth/signin`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Accept-Language": lang },
-        body: JSON.stringify({ email, password }),
-      });
-
-      const data = await response.json();
-      if (!response.ok) {
-        setError(data.error || t(lang, "auth.loginError"));
-        return;
-      }
-
-      localStorage.setItem("solvix_user", JSON.stringify(data.user));
-      localStorage.setItem("solvix_token", data.token);
-      onLogin(data.user);
-    } catch {
-      setError(t(lang, "auth.connectionError"));
+      const data = await api("/auth/me/password", { method: "PATCH", body: { currentPassword, newPassword } });
+      onChanged(data.user, data.token);
+    } catch (err) {
+      setError(err.status ? err.message : t(lang, "auth.connectionError"));
     } finally {
       setLoading(false);
     }
@@ -56,25 +50,29 @@ export default function AdminLogin({ onLogin, lang, setLang }) {
 
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
           <div>
-            <div style={{ fontSize: 26, fontFamily: "Syne, sans-serif", fontWeight: 800, color: "#fff" }}>{t(lang, "auth.adminTitle")}</div>
-            <div style={{ color: C.muted, marginTop: 10, fontSize: 14 }}>{t(lang, "auth.adminDesc")}</div>
+            <div style={{ fontSize: 22, fontFamily: "Syne, sans-serif", fontWeight: 800, color: "#fff" }}>{t(lang, "auth.mustChangeTitle")}</div>
+            <div style={{ color: C.muted, marginTop: 10, fontSize: 14 }}>{t(lang, "auth.mustChangeDesc").replace("{name}", user?.name || "")}</div>
           </div>
           <LanguageSwitcher lang={lang} setLang={setLang} />
         </div>
 
         <form onSubmit={handleSubmit} style={{ display: "grid", gap: 16 }}>
           <label style={styles.label}>
-            {t(lang, "auth.email")}
-            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} style={styles.input} />
+            {t(lang, "auth.currentPassword")}
+            <input type="password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} style={styles.input} />
           </label>
           <label style={styles.label}>
-            {t(lang, "auth.password")}
-            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} style={styles.input} />
+            {t(lang, "auth.newPassword")}
+            <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} style={styles.input} />
+          </label>
+          <label style={styles.label}>
+            {t(lang, "auth.confirmPassword")}
+            <input type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} style={styles.input} />
           </label>
           {error && <div style={styles.error}>{error}</div>}
 
           <button type="submit" disabled={loading} style={{ ...styles.submitButton, opacity: loading ? 0.6 : 1 }}>
-            {t(lang, "auth.submitLogin")}
+            {t(lang, "auth.changePassword")}
           </button>
         </form>
       </div>

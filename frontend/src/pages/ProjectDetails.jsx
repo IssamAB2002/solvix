@@ -5,10 +5,11 @@
 import { useState, useEffect, useRef } from "react";
 import C from "../styles/colors";
 import { Card, Btn } from "../components/UI";
+import MarkdownLite from "../components/Markdown";
 import { t } from "../i18n";
 import { api } from "../api";
 
-const AUTOPLAY_MS = 4500;
+const AUTOPLAY_MS = 3500;
 
 export default function ProjectDetails({ slug, go, lang }) {
   const [project, setProject] = useState(null);
@@ -59,7 +60,7 @@ export default function ProjectDetails({ slug, go, lang }) {
 
           {project.description && (
             <Card style={{ padding: 24, marginBottom: 20 }}>
-              <div style={{ color: C.text, fontSize: 15, lineHeight: 1.9, whiteSpace: "pre-line" }}>{project.description}</div>
+              <div style={{ color: C.text, fontSize: 15 }}><MarkdownLite text={project.description} /></div>
             </Card>
           )}
 
@@ -98,6 +99,7 @@ export default function ProjectDetails({ slug, go, lang }) {
 function Carousel({ images = [] }) {
   const [index, setIndex] = useState(0);
   const [paused, setPaused] = useState(false);
+  const [lightbox, setLightbox] = useState(false);
   const timerRef = useRef(null);
 
   useEffect(() => {
@@ -131,7 +133,7 @@ function Carousel({ images = [] }) {
       onMouseEnter={() => setPaused(true)}
       onMouseLeave={() => setPaused(false)}
     >
-      <div style={{ height: "clamp(220px, 55vw, 420px)", position: "relative" }}>
+      <div style={{ height: "clamp(220px, 55vw, 420px)", position: "relative", cursor: "zoom-in" }} onClick={() => setLightbox(true)}>
         {images.map((src, i) => (
           <img
             key={i}
@@ -170,6 +172,44 @@ function Carousel({ images = [] }) {
               />
             ))}
           </div>
+        </>
+      )}
+
+      {lightbox && (
+        <Lightbox images={images} index={index} onNav={go} onClose={() => setLightbox(false)} />
+      )}
+    </div>
+  );
+}
+
+function Lightbox({ images, index, onNav, onClose }) {
+  return (
+    <div
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.9)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}
+      onClick={onClose}
+    >
+      <button onClick={onClose} aria-label="Close"
+        style={{ position: "absolute", top: 20, right: 20, width: 40, height: 40, borderRadius: "50%", background: "rgba(255,255,255,.1)", border: `1px solid ${C.border}`, color: "#fff", fontSize: 18, cursor: "pointer" }}>
+        ✕
+      </button>
+
+      <img
+        src={images[index]}
+        alt=""
+        onClick={(e) => e.stopPropagation()}
+        style={{ maxWidth: "90vw", maxHeight: "90vh", objectFit: "contain", borderRadius: 8 }}
+      />
+
+      {images.length > 1 && (
+        <>
+          <button onClick={(e) => { e.stopPropagation(); onNav(-1); }} aria-label="Previous"
+            style={{ position: "absolute", top: "50%", left: 20, transform: "translateY(-50%)", width: 44, height: 44, borderRadius: "50%", background: "rgba(255,255,255,.1)", border: `1px solid ${C.border}`, color: "#fff", fontSize: 20, cursor: "pointer" }}>
+            ‹
+          </button>
+          <button onClick={(e) => { e.stopPropagation(); onNav(1); }} aria-label="Next"
+            style={{ position: "absolute", top: "50%", right: 20, transform: "translateY(-50%)", width: 44, height: 44, borderRadius: "50%", background: "rgba(255,255,255,.1)", border: `1px solid ${C.border}`, color: "#fff", fontSize: 20, cursor: "pointer" }}>
+            ›
+          </button>
         </>
       )}
     </div>

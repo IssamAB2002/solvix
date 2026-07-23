@@ -5,17 +5,24 @@
 
 import express from 'express';
 import crypto from 'crypto';
-import { requireStaff } from './auth.js';
+import { requireStaff, requireAdmin } from './auth.js';
 import {
   createOrder, listOrders, getOrderById, getOrderByUid, findOrderIdByKeyHash,
-  updateOrder, replaceOrderFeatures, deleteOrder, countOrders,
+  updateOrder, updateOrderKeyHash, replaceOrderFeatures, deleteOrder, countOrders,
   addPayment, listPayments,
 } from '../db.js';
 
 const router = express.Router();
 
-const ORDER_STAGES = ['analysis', 'design', 'development', 'testing', 'deployment'];
-const VALID_STATUSES = [...ORDER_STAGES, 'delivered'];
+// Stage pipeline shown depends on the project's kind — a debugging job doesn't
+// need a "design" stage, a bugfix doesn't need "analysis"/"design" from scratch.
+const STAGE_SETS = {
+  new: ['analysis', 'design', 'development', 'testing', 'deployment'],
+  developing: ['analysis', 'development', 'testing', 'deployment'],
+  debugging: ['diagnosis', 'fixing', 'testing', 'deployment'],
+};
+const ORDER_KINDS = Object.keys(STAGE_SETS);
+const validStatuses = (kind) => [...(STAGE_SETS[kind] || STAGE_SETS.new), 'delivered'];
 
 export function hashKey(key) {
   return crypto.createHash('sha256').update(key).digest('hex');
@@ -49,10 +56,13 @@ router.get('/orders/:id', requireStaff, async (req, res) => {
   res.json({ order });
 });
 
-router.post('/orders', requireStaff, async (req, res) => {
-  const { clientName, clientPhone, clientEmail, projectType, description, totalBudget, features } = req.body;
+router.post('/orders', requireAdmin, async (req, res) => {
+  const { clientName, clientPhone, clientEmail, projectType, description, kind, totalBudget, features } = req.body;
   if (!clientName?.trim() || !projectType?.trim()) {
     return res.status(400).json({ error: 'اسم العميل ونوع المشروع مطلوبان.' });
+  }
+  if (kind !== undefined && !ORDER_KINDS.includes(kind)) {
+    return res.status(400).json({ error: 'نوع مشروع غير صالح.' });
   }
 
   const uid = await generateUid();
@@ -65,6 +75,7 @@ router.post('/orders', requireStaff, async (req, res) => {
     clientEmail: clientEmail?.trim() || '',
     projectType: projectType.trim(),
     description: description?.trim() || '',
+    kind: ORDER_KINDS.includes(kind) ? kind : 'new',
     totalBudget: Number(totalBudget) || 0,
     features: sanitizeFeatures(features),
     createdBy: req.user.name,
@@ -77,11 +88,21 @@ router.put('/orders/:id', requireStaff, async (req, res) => {
   const existing = await getOrderById(req.params.id);
   if (!existing) return res.status(404).json({ error: 'الطلب غير موجود.' });
 
+  // Developers only move the build through its stages — everything else
+  // (client info, budget, features…) requires admin/ceo.
+  if (req.user.role === 'developer') {
+    const allowedKeys = ['status', 'progressPct'];
+    const extraKeys = Object.keys(req.body).filter((k) => !allowedKeys.includes(k));
+    if (extraKeys.length) {
+      return res.status(403).json({ error: 'يمكنك فقط تحديث حالة ونسبة تقدم المشروع.' });
+    }
+  }
+
   const { status, progressPct, features, ...rest } = req.body;
   const fields = { ...rest };
 
   if (status !== undefined) {
-    if (!VALID_STATUSES.includes(status)) {
+    if (!validStatuses(existing.kind).includes(status)) {
       return res.status(400).json({ error: 'حالة غير صالحة.' });
     }
     fields.status = status;
@@ -102,11 +123,21 @@ router.put('/orders/:id', requireStaff, async (req, res) => {
   res.json({ order });
 });
 
-router.delete('/orders/:id', requireStaff, async (req, res) => {
+router.delete('/orders/:id', requireAdmin, async (req, res) => {
   const existing = await getOrderById(req.params.id);
   if (!existing) return res.status(404).json({ error: 'الطلب غير موجود.' });
   await deleteOrder(req.params.id);
   res.json({ message: 'تم حذف الطلب.' });
+});
+
+// Staff: invalidate the client's current tracking key and issue a new one
+// (e.g. if it was shared with the wrong person). Shown once, like on creation.
+router.post('/orders/:id/regenerate-key', requireAdmin, async (req, res) => {
+  const existing = await getOrderById(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'الطلب غير موجود.' });
+  const privateKey = crypto.randomBytes(16).toString('hex');
+  const order = await updateOrderKeyHash(req.params.id, hashKey(privateKey));
+  res.json({ order, privateKey });
 });
 
 // ── Staff: payments ───────────────────────────────────────────────────────────
@@ -114,7 +145,7 @@ router.get('/payments', requireStaff, async (_req, res) => {
   res.json({ payments: await listPayments() });
 });
 
-router.post('/orders/:id/payments', requireStaff, async (req, res) => {
+router.post('/orders/:id/payments', requireAdmin, async (req, res) => {
   const existing = await getOrderById(req.params.id);
   if (!existing) return res.status(404).json({ error: 'الطلب غير موجود.' });
 
@@ -165,6 +196,7 @@ router.post('/track', trackRateLimit, async (req, res) => {
       clientName: order.clientName,
       projectType: order.projectType,
       description: order.description,
+      kind: order.kind || 'new',
       status: order.status,
       progressPct: order.progressPct,
       totalBudget: order.totalBudget,

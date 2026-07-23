@@ -5,12 +5,13 @@
 import { useState } from "react";
 import C from "../styles/colors";
 import { Card, Badge, Btn } from "../components/UI";
+import { STAGE_SETS } from "../data";
 import { t } from "../i18n";
 import { api } from "../api";
 
-const STAGES = ["analysis", "design", "development", "testing", "deployment"];
 const STAGE_COLOR = { done: "#22C55E", current: "#6C63FF", next: "#4A4A6A" };
 const DELIVERED_COLOR = "#FBBF24";
+const KIND_COLOR = { new: "#6C63FF", debugging: "#EF4444", developing: "#F59E0B" };
 
 function fmtMoney(value, lang) {
   const n = Number(value) || 0;
@@ -81,6 +82,8 @@ export default function Track({ go, lang }) {
 
 function OrderDetails({ order, lang, onBack }) {
   const isDelivered = order.status === "delivered";
+  const kind = order.kind || "new";
+  const STAGES = STAGE_SETS[kind] || STAGE_SETS.new;
   const currentIdx = STAGES.indexOf(order.status);
   const stageState = (i) => (i < currentIdx ? "done" : i === currentIdx ? "current" : "next");
   const featuresTotal = (order.features || []).reduce((s, f) => s + (Number(f.price) || 0), 0);
@@ -93,7 +96,10 @@ function OrderDetails({ order, lang, onBack }) {
         <div>
           <div style={{ fontSize: 12, color: C.accent, letterSpacing: 2, fontWeight: 600, marginBottom: 8, direction: "ltr", textAlign: lang === "ar" ? "right" : "left" }}>{order.uid}</div>
           <h2 style={{ fontFamily: "Syne, sans-serif", fontWeight: 800, fontSize: 30, color: "#fff", marginBottom: 6 }}>{order.projectType}</h2>
-          <div style={{ color: C.muted, fontSize: 14 }}>{t(lang, "track.welcomeClient").replace("{name}", order.clientName)}</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <div style={{ color: C.muted, fontSize: 14 }}>{t(lang, "track.welcomeClient").replace("{name}", order.clientName)}</div>
+            <Badge label={t(lang, `dashboard.requestKind.${kind}`)} color={KIND_COLOR[kind] || C.accent} />
+          </div>
         </div>
         <Badge
           label={isDelivered ? `✅ ${t(lang, "track.deliveredBadge")}` : t(lang, `dashboard.projectStages.${order.status}`)}

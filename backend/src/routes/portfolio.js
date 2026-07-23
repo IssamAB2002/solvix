@@ -4,7 +4,7 @@
 // them to render the Projects page and each project's details page.
 
 import express from 'express';
-import { requireStaff } from './auth.js';
+import { requireAdmin } from './auth.js';
 import {
   listPortfolioProjects, getPortfolioProjectById, getPortfolioProjectBySlug,
   createPortfolioProject, updatePortfolioProject, deletePortfolioProject,
@@ -42,7 +42,7 @@ router.get('/:slug', async (req, res) => {
 });
 
 // Staff: CRUD
-router.post('/', requireStaff, async (req, res) => {
+router.post('/', requireAdmin, async (req, res) => {
   const { title, stack, description, problem, solution, images } = req.body || {};
   if (!title?.trim()) {
     return res.status(400).json({ error: 'عنوان المشروع مطلوب.' });
@@ -58,7 +58,7 @@ router.post('/', requireStaff, async (req, res) => {
   res.json({ project });
 });
 
-router.put('/:id', requireStaff, async (req, res) => {
+router.put('/:id', requireAdmin, async (req, res) => {
   const existing = await getPortfolioProjectById(req.params.id);
   if (!existing) return res.status(404).json({ error: 'المشروع غير موجود.' });
 
@@ -78,7 +78,7 @@ router.put('/:id', requireStaff, async (req, res) => {
   res.json({ project });
 });
 
-router.delete('/:id', requireStaff, async (req, res) => {
+router.delete('/:id', requireAdmin, async (req, res) => {
   const existing = await getPortfolioProjectById(req.params.id);
   if (!existing) return res.status(404).json({ error: 'المشروع غير موجود.' });
   await deletePortfolioProject(req.params.id);

@@ -43,8 +43,16 @@ export const DURATION_MAP = {
   enterprise: "8–16 weeks",
 };
 
+// ── نوع الطلب: إنشاء جديد / تصحيح أخطاء / تطوير برنامج قائم ────────────────────
+export const REQUEST_KINDS = [
+  { i: "🆕", value: "new", labelKey: "new", subtitleKey: "new" },
+  { i: "🐛", value: "debugging", labelKey: "debugging", subtitleKey: "debugging" },
+  { i: "🔧", value: "developing", labelKey: "developing", subtitleKey: "developing" },
+];
+
 // ── خطوات نموذج الطلب ────────────────────────────────────────────────────────
 export const REQ_STEPS = [
+  { key: "kind", opts: REQUEST_KINDS },
   { key: "type", opts: [
       { i: "🌐", value: "web", labelKey: "web", subtitleKey: "web" },
       { i: "📱", value: "mobile", labelKey: "mobile", subtitleKey: "mobile" },
@@ -68,4 +76,11 @@ export const REQ_STEPS = [
 ];
 
 // ── مراحل تنفيذ المشروع (تُستخدم في لوحة الإدارة وصفحة التتبع) ────────────────
+// المراحل تختلف حسب نوع المشروع — التصحيح لا يحتاج "تصميم"، والتطوير لا يبدأ من الصفر.
 export const ORDER_STAGES = ["analysis", "design", "development", "testing", "deployment"];
+
+export const STAGE_SETS = {
+  new: ORDER_STAGES,
+  developing: ["analysis", "development", "testing", "deployment"],
+  debugging: ["diagnosis", "fixing", "testing", "deployment"],
+};

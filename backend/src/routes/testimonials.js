@@ -4,7 +4,7 @@
 // panel; only approved testimonials are shown on the Home page.
 
 import express from 'express';
-import { requireStaff } from './auth.js';
+import { requireStaff, requireAdmin } from './auth.js';
 import {
   createTestimonial, listTestimonials, listApprovedTestimonials,
   getTestimonialById, updateTestimonialStatus, deleteTestimonialById,
@@ -41,7 +41,7 @@ router.get('/', async (req, res) => {
 });
 
 // Staff: approve/reject.
-router.put('/:id', requireStaff, async (req, res) => {
+router.put('/:id', requireAdmin, async (req, res) => {
   const existing = await getTestimonialById(req.params.id);
   if (!existing) return res.status(404).json({ error: 'التقييم غير موجود.' });
 
@@ -53,7 +53,7 @@ router.put('/:id', requireStaff, async (req, res) => {
   res.json({ testimonial });
 });
 
-router.delete('/:id', requireStaff, async (req, res) => {
+router.delete('/:id', requireAdmin, async (req, res) => {
   const existing = await getTestimonialById(req.params.id);
   if (!existing) return res.status(404).json({ error: 'التقييم غير موجود.' });
   await deleteTestimonialById(req.params.id);

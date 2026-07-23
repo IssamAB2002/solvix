@@ -1,4 +1,4 @@
-// ─── ADMIN DASHBOARD (/admin) ────────────────────────────────────────────────
+// ─── ADMIN DASHBOARD (/solvix-dir) ────────────────────────────────────────────
 // CEO & developers only. All tabs are wired to the backend API:
 // orders (with UID + one-time private key), CRM, payments, revenue, kanban, leads.
 
@@ -7,7 +7,7 @@ import C from "../styles/colors";
 import { Card, Badge, Btn } from "../components/UI";
 import { t } from "../i18n";
 import { api } from "../api";
-import { ORDER_STAGES } from "../data";
+import { ORDER_STAGES, STAGE_SETS, REQUEST_KINDS } from "../data";
 
 const SIDEBAR_ITEMS = [
   { id: "overview", icon: "🏠" },
@@ -20,9 +20,12 @@ const SIDEBAR_ITEMS = [
   { id: "portfolio", icon: "🖼️" },
   { id: "testimonials", icon: "🌟" },
   { id: "messages", icon: "💬" },
+  { id: "team", icon: "👤", ceoOnly: true },
 ];
 
-const STAGE_COLORS = { analysis: "#22C55E", design: "#6C63FF", development: "#F59E0B", testing: "#38BDF8", deployment: "#22C55E", delivered: "#FBBF24" };
+const STAGE_COLORS = { analysis: "#22C55E", design: "#6C63FF", development: "#F59E0B", diagnosis: "#EF4444", fixing: "#F59E0B", testing: "#38BDF8", deployment: "#22C55E", delivered: "#FBBF24" };
+// كل المراحل الممكنة عبر أنواع المشاريع الثلاثة — تُستخدم لتصفية المشاريع بالحالة
+const ALL_STAGES = [...new Set(Object.values(STAGE_SETS).flat())];
 const PRIORITY_COLORS = { high: "#EF4444", mid: "#F59E0B", low: "#22C55E" };
 
 function fmtMoney(value, lang) {
@@ -54,6 +57,7 @@ export default function Dashboard({ user, lang, setLang, onLogout }) {
   const [testimonials, setTestimonials] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
+  const [changingPassword, setChangingPassword] = useState(false);
 
   const reload = useCallback(async () => {
     try {
@@ -77,7 +81,7 @@ export default function Dashboard({ user, lang, setLang, onLogout }) {
 
   useEffect(() => { reload(); }, [reload]);
 
-  const shared = { lang, orders, requests, payments, tasks, portfolio, testimonials, reload };
+  const shared = { lang, orders, requests, payments, tasks, portfolio, testimonials, reload, user };
 
   return (
     <div dir={lang === "ar" ? "rtl" : "ltr"} className="admin-shell" style={{ display: "grid", gridTemplateColumns: "220px 1fr", minHeight: "100vh" }}>
@@ -92,7 +96,7 @@ export default function Dashboard({ user, lang, setLang, onLogout }) {
         </div>
 
         <div style={{ flex: 1 }}>
-          {SIDEBAR_ITEMS.map((s) => {
+          {SIDEBAR_ITEMS.filter((s) => !s.ceoOnly || user?.role === "ceo").map((s) => {
             const disabled = s.id === "messages"; // معطّل حالياً — سيعود مع الذكاء الاصطناعي
             const pendingCount = requests.filter((r) => (r.status || "pending") === "pending").length;
             const pendingTestimonials = testimonials.filter((r) => (r.status || "pending") === "pending").length;
@@ -105,7 +109,7 @@ export default function Dashboard({ user, lang, setLang, onLogout }) {
                          opacity: disabled ? 0.45 : 1,
                          fontFamily: "Inter, sans-serif", textAlign: lang === "ar" ? "right" : "left", transition: "all .15s" }}>
                 <span style={{ fontSize: 16 }}>{s.icon}</span>
-                {t(lang, `dashboard.${s.id}`)}
+                {t(lang, s.id === "team" ? "dashboard.team.sidebar" : `dashboard.${s.id}`)}
                 {s.id === "requests" && pendingCount > 0 && (
                   <span style={{ background: C.accent, color: "#fff", borderRadius: 10, fontSize: 11, padding: "1px 8px", marginInlineStart: "auto" }}>{pendingCount}</span>
                 )}
@@ -132,6 +136,10 @@ export default function Dashboard({ user, lang, setLang, onLogout }) {
             ))}
           </div>
           <a href="/" style={{ fontSize: 13, color: C.muted, textDecoration: "none", padding: "4px 0" }}>{t(lang, "dashboard.viewSite")}</a>
+          <button onClick={() => setChangingPassword(true)}
+            style={{ background: "transparent", border: `1px solid ${C.border}`, borderRadius: 8, padding: "8px 12px", color: C.muted, fontSize: 13, cursor: "pointer", fontFamily: "Inter, sans-serif" }}>
+            {t(lang, "auth.changePassword")}
+          </button>
           <button onClick={onLogout}
             style={{ background: "transparent", border: `1px solid ${C.border}`, borderRadius: 8, padding: "8px 12px", color: C.muted, fontSize: 13, cursor: "pointer", fontFamily: "Inter, sans-serif", marginBottom: 8 }}>
             {t(lang, "nav.logout")}
@@ -165,9 +173,286 @@ export default function Dashboard({ user, lang, setLang, onLogout }) {
                 💬 {t(lang, "dashboard.messagesDisabled")}
               </Card>
             )}
+            {tab === "team" && user?.role === "ceo" && <TeamTab lang={lang} currentUserId={user.id} />}
           </>
         )}
       </main>
+
+      {changingPassword && (
+        <ChangePasswordModal
+          lang={lang}
+          onClose={() => setChangingPassword(false)}
+          onChanged={(token) => {
+            localStorage.setItem("solvix_token", token);
+            setChangingPassword(false);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── CHANGE PASSWORD (self-service, all roles) ─────────────────────────────────
+function ChangePasswordModal({ lang, onClose, onChanged }) {
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    if (!currentPassword || !newPassword) {
+      setError(t(lang, "auth.required"));
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setError(t(lang, "auth.passwordMismatch"));
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      const data = await api("/auth/me/password", { method: "PATCH", body: { currentPassword, newPassword } });
+      onChanged(data.token);
+    } catch (err) {
+      setError(err.status ? err.message : t(lang, "auth.connectionError"));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.7)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+      <Card style={{ padding: 32, maxWidth: 420, width: "100%", border: `1px solid ${C.border}` }}>
+        <div style={{ fontFamily: "Syne, sans-serif", fontWeight: 800, fontSize: 20, color: "#fff", marginBottom: 20 }}>
+          {t(lang, "auth.changePassword")}
+        </div>
+
+        <label style={{ fontSize: 13, color: C.muted, display: "block", marginBottom: 6 }}>{t(lang, "auth.currentPassword")}</label>
+        <input type="password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} style={{ ...inputStyle, marginBottom: 14 }} />
+
+        <label style={{ fontSize: 13, color: C.muted, display: "block", marginBottom: 6 }}>{t(lang, "auth.newPassword")}</label>
+        <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} style={{ ...inputStyle, marginBottom: 14 }} />
+
+        <label style={{ fontSize: 13, color: C.muted, display: "block", marginBottom: 6 }}>{t(lang, "auth.confirmPassword")}</label>
+        <input type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} style={{ ...inputStyle, marginBottom: 18 }} />
+
+        {error && <div style={{ color: "#F87171", fontSize: 14, marginBottom: 12 }}>{error}</div>}
+
+        <div style={{ display: "flex", gap: 10 }}>
+          <Btn onClick={submit} style={{ opacity: busy ? 0.6 : 1 }}>{busy ? "..." : t(lang, "auth.changePassword")}</Btn>
+          <Btn variant="outline" onClick={onClose}>{t(lang, "dashboard.orderForm.cancel")}</Btn>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+// ── TEAM (staff management, CEO-only) ─────────────────────────────────────────
+function TeamTab({ lang, currentUserId }) {
+  const [staff, setStaff] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [error, setError] = useState("");
+  const [newAccount, setNewAccount] = useState(null); // { name, email, password } shown once
+  const [resetting, setResetting] = useState(null); // staff member being reset
+
+  const reload = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await api("/auth/staff");
+      setStaff(data.staff);
+      setError("");
+    } catch (err) {
+      setError(err.status ? err.message : t(lang, "auth.connectionError"));
+    }
+    setLoading(false);
+  }, [lang]);
+
+  useEffect(() => { reload(); }, [reload]);
+
+  const remove = async (member) => {
+    if (!window.confirm(t(lang, "dashboard.team.deleteConfirm"))) return;
+    try {
+      await api(`/auth/staff/${member.id}`, { method: "DELETE" });
+      await reload();
+    } catch (err) {
+      setError(err.status ? err.message : t(lang, "auth.connectionError"));
+    }
+  };
+
+  return (
+    <div>
+      <DashTitle action={<Btn onClick={() => setShowForm((v) => !v)}>{showForm ? t(lang, "dashboard.orderForm.cancel") : t(lang, "dashboard.team.newAccount")}</Btn>}>
+        {t(lang, "dashboard.team.title")}
+      </DashTitle>
+
+      {showForm && (
+        <StaffForm lang={lang} onCreated={(account) => { setShowForm(false); setNewAccount(account); reload(); }} />
+      )}
+
+      {newAccount && (
+        <InitialPasswordModal lang={lang} account={newAccount} onClose={() => setNewAccount(null)} />
+      )}
+      {resetting && (
+        <ResetPasswordModal lang={lang} member={resetting} onClose={() => setResetting(null)} onReset={(account) => { setResetting(null); setNewAccount(account); }} />
+      )}
+
+      {error && <div style={{ color: "#F87171", fontSize: 13, marginBottom: 12 }}>{error}</div>}
+
+      {loading ? (
+        <div style={{ color: C.muted }}>{t(lang, "dashboard.loading")}</div>
+      ) : staff.length === 0 ? (
+        <Card style={{ padding: 28, color: C.muted, fontSize: 14 }}>{t(lang, "dashboard.team.empty")}</Card>
+      ) : (
+        <Card style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr>
+                {["name", "email", "role", "status", "actions"].map((f) => (
+                  <Th key={f} lang={lang}>{t(lang, `dashboard.team.table.${f}`)}</Th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {staff.map((member) => (
+                <tr key={member.id}>
+                  <Td style={{ color: "#fff", fontWeight: 600 }}>{member.name}</Td>
+                  <Td style={{ direction: "ltr", textAlign: lang === "ar" ? "right" : "left" }}>{member.email}</Td>
+                  <Td><Badge label={t(lang, `dashboard.roles.${member.role}`)} color={member.role === "ceo" ? C.accent : member.role === "admin" ? "#F59E0B" : C.muted} /></Td>
+                  <Td style={{ fontSize: 13, color: member.mustChangePassword ? C.yellow : C.muted }}>
+                    {member.mustChangePassword ? t(lang, "dashboard.team.pendingFirstLogin") : t(lang, "dashboard.team.active")}
+                  </Td>
+                  <Td style={{ whiteSpace: "nowrap" }}>
+                    {member.role !== "ceo" && (
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <MiniBtn onClick={() => setResetting(member)}>{t(lang, "dashboard.team.resetPassword")}</MiniBtn>
+                        {member.id !== currentUserId && <MiniBtn onClick={() => remove(member)} danger>{t(lang, "dashboard.requestActions.delete")}</MiniBtn>}
+                      </div>
+                    )}
+                  </Td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+function StaffForm({ lang, onCreated }) {
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [role, setRole] = useState("developer");
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const submit = async () => {
+    if (!name.trim() || !email.trim() || !password) {
+      setError(t(lang, "auth.required"));
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      await api("/auth/staff", { method: "POST", body: { name: name.trim(), email: email.trim(), password, role } });
+      onCreated({ name: name.trim(), email: email.trim(), password });
+    } catch (err) {
+      setError(err.status ? err.message : t(lang, "auth.connectionError"));
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card style={{ padding: 26, marginBottom: 20, border: `1px solid ${C.accent}55` }}>
+      <div style={{ fontFamily: "Syne, sans-serif", fontWeight: 700, fontSize: 17, color: "#fff", marginBottom: 20 }}>{t(lang, "dashboard.team.newAccount")}</div>
+
+      <label style={{ fontSize: 13, color: C.muted, display: "block", marginBottom: 6 }}>{t(lang, "dashboard.team.form.name")}</label>
+      <input value={name} onChange={(e) => setName(e.target.value)} style={{ ...inputStyle, marginBottom: 14 }} />
+
+      <label style={{ fontSize: 13, color: C.muted, display: "block", marginBottom: 6 }}>{t(lang, "auth.email")}</label>
+      <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} style={{ ...inputStyle, marginBottom: 14 }} />
+
+      <label style={{ fontSize: 13, color: C.muted, display: "block", marginBottom: 6 }}>{t(lang, "dashboard.team.form.initialPassword")}</label>
+      <input type="text" value={password} onChange={(e) => setPassword(e.target.value)} style={{ ...inputStyle, marginBottom: 14 }} />
+
+      <label style={{ fontSize: 13, color: C.muted, display: "block", marginBottom: 6 }}>{t(lang, "dashboard.team.form.role")}</label>
+      <select value={role} onChange={(e) => setRole(e.target.value)} style={{ ...inputStyle, marginBottom: 18 }}>
+        <option value="developer">{t(lang, "dashboard.roles.developer")}</option>
+        <option value="admin">{t(lang, "dashboard.roles.admin")}</option>
+      </select>
+
+      {error && <div style={{ color: "#F87171", fontSize: 14, marginBottom: 12 }}>{error}</div>}
+      <Btn onClick={submit} style={{ opacity: saving ? 0.6 : 1 }}>{saving ? "..." : t(lang, "dashboard.team.form.create")}</Btn>
+    </Card>
+  );
+}
+
+function InitialPasswordModal({ lang, account, onClose }) {
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.7)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+      <Card style={{ padding: 32, maxWidth: 480, width: "100%", border: `1px solid ${C.accent}` }}>
+        <div style={{ fontSize: 40, marginBottom: 12 }}>🔑</div>
+        <div style={{ fontFamily: "Syne, sans-serif", fontWeight: 800, fontSize: 20, color: "#fff", marginBottom: 6 }}>{t(lang, "dashboard.team.initialPasswordTitle")}</div>
+        <div style={{ color: C.muted, fontSize: 14, lineHeight: 1.7, marginBottom: 20 }}>{t(lang, "dashboard.team.initialPasswordHint")}</div>
+
+        {[[t(lang, "auth.email"), account.email], [t(lang, "dashboard.team.form.initialPassword"), account.password]].map(([label, value]) => (
+          <div key={label} style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 12, color: C.muted, textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>{label}</div>
+            <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px", fontFamily: "monospace", fontSize: 15, color: C.accentLight, direction: "ltr", textAlign: "center", letterSpacing: 1 }}>{value}</div>
+          </div>
+        ))}
+
+        <div style={{ background: "rgba(245,158,11,.1)", border: "1px solid rgba(245,158,11,.35)", borderRadius: 10, padding: "12px 14px", fontSize: 13, color: C.yellow, lineHeight: 1.7, marginBottom: 20 }}>
+          ⚠️ {t(lang, "dashboard.keyModal.warning")}
+        </div>
+
+        <Btn onClick={onClose}>{t(lang, "dashboard.keyModal.done")}</Btn>
+      </Card>
+    </div>
+  );
+}
+
+function ResetPasswordModal({ lang, member, onClose, onReset }) {
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    if (!password || password.length < 8) {
+      setError(t(lang, "auth.passwordTooShort"));
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      await api(`/auth/staff/${member.id}/reset-password`, { method: "PATCH", body: { password } });
+      onReset({ name: member.name, email: member.email, password });
+    } catch (err) {
+      setError(err.status ? err.message : t(lang, "auth.connectionError"));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.7)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+      <Card style={{ padding: 32, maxWidth: 420, width: "100%", border: `1px solid ${C.border}` }}>
+        <div style={{ fontFamily: "Syne, sans-serif", fontWeight: 800, fontSize: 20, color: "#fff", marginBottom: 6 }}>
+          {t(lang, "dashboard.team.resetPassword")}
+        </div>
+        <div style={{ color: C.muted, fontSize: 13, marginBottom: 18 }}>{member.name} — {member.email}</div>
+
+        <label style={{ fontSize: 13, color: C.muted, display: "block", marginBottom: 6 }}>{t(lang, "dashboard.team.form.initialPassword")}</label>
+        <input type="text" value={password} onChange={(e) => setPassword(e.target.value)} style={{ ...inputStyle, marginBottom: 18 }} />
+
+        {error && <div style={{ color: "#F87171", fontSize: 14, marginBottom: 12 }}>{error}</div>}
+
+        <div style={{ display: "flex", gap: 10 }}>
+          <Btn onClick={submit} style={{ opacity: busy ? 0.6 : 1 }}>{busy ? "..." : t(lang, "dashboard.team.resetPassword")}</Btn>
+          <Btn variant="outline" onClick={onClose}>{t(lang, "dashboard.orderForm.cancel")}</Btn>
+        </div>
+      </Card>
     </div>
   );
 }
@@ -271,7 +556,8 @@ function OverviewTab({ lang, orders, requests, user, goTab }) {
 }
 
 // ── PROJECTS (ORDERS) ─────────────────────────────────────────────────────────
-function ProjectsTab({ lang, orders, reload }) {
+function ProjectsTab({ lang, orders, reload, user }) {
+  const canManage = user?.role !== "developer";
   const [showForm, setShowForm] = useState(false);
   const [created, setCreated] = useState(null); // { order, privateKey }
   const [search, setSearch] = useState("");
@@ -291,11 +577,11 @@ function ProjectsTab({ lang, orders, reload }) {
 
   return (
     <div>
-      <DashTitle action={<Btn onClick={() => setShowForm((v) => !v)}>{showForm ? t(lang, "dashboard.orderForm.cancel") : t(lang, "dashboard.newOrder")}</Btn>}>
+      <DashTitle action={canManage && <Btn onClick={() => setShowForm((v) => !v)}>{showForm ? t(lang, "dashboard.orderForm.cancel") : t(lang, "dashboard.newOrder")}</Btn>}>
         {t(lang, "dashboard.projects")}
       </DashTitle>
 
-      {showForm && (
+      {showForm && canManage && (
         <OrderForm lang={lang} onCreated={(data) => { setShowForm(false); setCreated(data); reload(); }} />
       )}
 
@@ -305,7 +591,7 @@ function ProjectsTab({ lang, orders, reload }) {
         <input placeholder={t(lang, "dashboard.projectsFilter.search")} value={search} onChange={(e) => setSearch(e.target.value)} style={{ ...inputStyle, flex: 1, minWidth: 200 }} />
         <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={{ ...inputStyle, width: "auto" }}>
           <option value="">{t(lang, "dashboard.projectsFilter.statusAll")}</option>
-          {ORDER_STAGES.map((s) => <option key={s} value={s}>{t(lang, `dashboard.projectStages.${s}`)}</option>)}
+          {ALL_STAGES.map((s) => <option key={s} value={s}>{t(lang, `dashboard.projectStages.${s}`)}</option>)}
           <option value="delivered">{t(lang, "dashboard.projectStages.delivered")}</option>
         </select>
         {/* Date pickers are locked to English formatting regardless of site language */}
@@ -322,7 +608,7 @@ function ProjectsTab({ lang, orders, reload }) {
       )}
 
       {filtered.map((order) => (
-        <OrderCard key={order.id} order={order} lang={lang} reload={reload} />
+        <OrderCard key={order.id} order={order} lang={lang} reload={reload} canManage={canManage} />
       ))}
     </div>
   );
@@ -331,7 +617,7 @@ function ProjectsTab({ lang, orders, reload }) {
 const PROJECT_TYPE_CHIPS = ["web", "mobile", "desktop", "ai"];
 
 function OrderForm({ lang, onCreated }) {
-  const [form, setForm] = useState({ clientName: "", clientPhone: "", clientEmail: "", projectType: "", description: "", totalBudget: "" });
+  const [form, setForm] = useState({ clientName: "", clientPhone: "", clientEmail: "", kind: "new", projectType: "", description: "", totalBudget: "" });
   const [features, setFeatures] = useState([{ name: "", price: "" }]);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -386,6 +672,11 @@ function OrderForm({ lang, onCreated }) {
         ))}
       </div>
 
+      <label style={{ fontSize: 13, color: C.muted, display: "block", marginBottom: 6 }}>{t(lang, "dashboard.orderForm.kind")}</label>
+      <select value={form.kind} onChange={set("kind")} style={{ ...inputStyle, marginBottom: 14 }}>
+        {REQUEST_KINDS.map((k) => <option key={k.value} value={k.value}>{t(lang, `dashboard.requestKind.${k.value}`)}</option>)}
+      </select>
+
       <label style={{ fontSize: 13, color: C.muted, display: "block", marginBottom: 6 }}>{t(lang, "dashboard.orderForm.projectType")}</label>
       <input value={form.projectType} onChange={set("projectType")} style={{ ...inputStyle, marginBottom: 8 }} />
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
@@ -419,7 +710,7 @@ function OrderForm({ lang, onCreated }) {
   );
 }
 
-function KeyModal({ lang, data, onClose }) {
+function KeyModal({ lang, data, onClose, titleKey = "dashboard.keyModal.title", subtitleKey = "dashboard.keyModal.subtitle" }) {
   const [copied, setCopied] = useState(false);
   const copy = async () => {
     try {
@@ -432,8 +723,8 @@ function KeyModal({ lang, data, onClose }) {
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.7)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
       <Card style={{ padding: 32, maxWidth: 520, width: "100%", border: `1px solid ${C.accent}` }}>
         <div style={{ fontSize: 40, marginBottom: 12 }}>🔑</div>
-        <div style={{ fontFamily: "Syne, sans-serif", fontWeight: 800, fontSize: 22, color: "#fff", marginBottom: 6 }}>{t(lang, "dashboard.keyModal.title")}</div>
-        <div style={{ color: C.muted, fontSize: 14, lineHeight: 1.7, marginBottom: 20 }}>{t(lang, "dashboard.keyModal.subtitle")}</div>
+        <div style={{ fontFamily: "Syne, sans-serif", fontWeight: 800, fontSize: 22, color: "#fff", marginBottom: 6 }}>{t(lang, titleKey)}</div>
+        <div style={{ color: C.muted, fontSize: 14, lineHeight: 1.7, marginBottom: 20 }}>{t(lang, subtitleKey)}</div>
 
         {[[t(lang, "dashboard.keyModal.uid"), data.order.uid], [t(lang, "dashboard.keyModal.key"), data.privateKey]].map(([label, value]) => (
           <div key={label} style={{ marginBottom: 14 }}>
@@ -455,7 +746,7 @@ function KeyModal({ lang, data, onClose }) {
   );
 }
 
-function OrderCard({ order, lang, reload }) {
+function OrderCard({ order, lang, reload, canManage }) {
   const [status, setStatus] = useState(order.status);
   const [pct, setPct] = useState(order.progressPct);
   const [expanded, setExpanded] = useState(false);
@@ -466,6 +757,9 @@ function OrderCard({ order, lang, reload }) {
   const [budgetInput, setBudgetInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [newKey, setNewKey] = useState(null); // { order, privateKey } after regenerating
+
+  const stages = STAGE_SETS[order.kind] || STAGE_SETS.new;
 
   const dirty = status !== order.status || Number(pct) !== order.progressPct;
 
@@ -526,6 +820,11 @@ function OrderCard({ order, lang, reload }) {
     act(async () => { await api(`/orders/${order.id}`, { method: "DELETE" }); await reload(); });
   };
 
+  const regenerateKey = () => {
+    if (!window.confirm(t(lang, "dashboard.regenerateKey.confirm"))) return;
+    act(async () => { setNewKey(await api(`/orders/${order.id}/regenerate-key`, { method: "POST" })); });
+  };
+
   return (
     <Card style={{ padding: 24, marginBottom: 14 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 12 }}>
@@ -535,7 +834,10 @@ function OrderCard({ order, lang, reload }) {
             {order.uid} · {fmtDate(order.createdAt)}{order.createdBy && <> · 👤 {order.createdBy}</>}
           </div>
         </div>
-        <StageBadge status={order.status} lang={lang} />
+        <div style={{ display: "flex", gap: 8 }}>
+          <Badge label={t(lang, `dashboard.requestKind.${order.kind || "new"}`)} color={REQUEST_KIND_COLORS[order.kind] || C.accent} />
+          <StageBadge status={order.status} lang={lang} />
+        </div>
       </div>
 
       <div style={{ height: 8, background: C.border, borderRadius: 4, marginBottom: 8 }}>
@@ -549,19 +851,31 @@ function OrderCard({ order, lang, reload }) {
       {/* Controls */}
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
         <select value={status} onChange={(e) => setStatus(e.target.value)} style={{ ...inputStyle, width: "auto" }}>
-          {ORDER_STAGES.map((s) => <option key={s} value={s}>{t(lang, `dashboard.projectStages.${s}`)}</option>)}
+          {stages.map((s) => <option key={s} value={s}>{t(lang, `dashboard.projectStages.${s}`)}</option>)}
           <option value="delivered">✅ {t(lang, "dashboard.projectStages.delivered")}</option>
         </select>
         <input type="number" min="0" max="100" value={pct} onChange={(e) => setPct(e.target.value)} style={{ ...inputStyle, width: 80 }} />
         <span style={{ color: C.muted, fontSize: 13 }}>%</span>
         {dirty && <Btn onClick={save} style={{ opacity: busy ? 0.6 : 1 }}>{t(lang, "dashboard.save")}</Btn>}
         <Btn variant="outline" onClick={toggleDetails}>{expanded ? t(lang, "dashboard.hideDetails") : t(lang, "dashboard.details")}</Btn>
-        <button onClick={remove} style={{ background: "transparent", border: "1px solid rgba(239,68,68,.4)", borderRadius: 10, padding: "10px 16px", color: "#EF4444", fontSize: 13, cursor: "pointer", fontFamily: "Inter, sans-serif" }}>
-          {t(lang, "dashboard.deleteOrder")}
-        </button>
+        {canManage && (
+          <button onClick={remove} style={{ background: "transparent", border: "1px solid rgba(239,68,68,.4)", borderRadius: 10, padding: "10px 16px", color: "#EF4444", fontSize: 13, cursor: "pointer", fontFamily: "Inter, sans-serif" }}>
+            {t(lang, "dashboard.deleteOrder")}
+          </button>
+        )}
       </div>
 
       {error && <div style={{ color: "#F87171", fontSize: 13, marginTop: 10 }}>{error}</div>}
+
+      {newKey && (
+        <KeyModal
+          lang={lang}
+          data={newKey}
+          onClose={() => setNewKey(null)}
+          titleKey="dashboard.regenerateKey.title"
+          subtitleKey="dashboard.regenerateKey.subtitle"
+        />
+      )}
 
       {expanded && details && (
         <div style={{ marginTop: 20, borderTop: `1px solid ${C.border}`, paddingTop: 18 }}>
@@ -572,26 +886,39 @@ function OrderCard({ order, lang, reload }) {
           )}
           {details.description && <div style={{ fontSize: 13, color: C.muted, lineHeight: 1.7, marginBottom: 16 }}>{details.description}</div>}
 
+          {canManage && <MiniBtn onClick={regenerateKey}>{t(lang, "dashboard.regenerateKey.button")}</MiniBtn>}
+          <div style={{ marginBottom: 16 }} />
+
           <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", marginBottom: 8 }}>{t(lang, "dashboard.featuresTitle")}</div>
           {features.map((f, i) => (
             <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
-              <button onClick={() => toggleFeatureDone(i)} style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 15 }}>{f.done ? "✅" : "◻️"}</button>
-              <input placeholder={t(lang, "dashboard.orderForm.featureName")} value={f.name} onChange={setFeatureField(i, "name")} style={{ ...inputStyle, flex: 2 }} />
-              <input placeholder={t(lang, "dashboard.orderForm.featurePrice")} type="number" value={f.price} onChange={setFeatureField(i, "price")} style={{ ...inputStyle, flex: 1 }} />
-              <button onClick={() => removeFeatureRow(i)} style={{ background: "transparent", border: `1px solid ${C.border}`, borderRadius: 8, color: C.muted, cursor: "pointer", padding: "0 12px", height: 38 }}>✕</button>
+              <button onClick={() => canManage && toggleFeatureDone(i)} style={{ background: "transparent", border: "none", cursor: canManage ? "pointer" : "default", fontSize: 15 }}>{f.done ? "✅" : "◻️"}</button>
+              {canManage ? (
+                <>
+                  <input placeholder={t(lang, "dashboard.orderForm.featureName")} value={f.name} onChange={setFeatureField(i, "name")} style={{ ...inputStyle, flex: 2 }} />
+                  <input placeholder={t(lang, "dashboard.orderForm.featurePrice")} type="number" value={f.price} onChange={setFeatureField(i, "price")} style={{ ...inputStyle, flex: 1 }} />
+                  <button onClick={() => removeFeatureRow(i)} style={{ background: "transparent", border: `1px solid ${C.border}`, borderRadius: 8, color: C.muted, cursor: "pointer", padding: "0 12px", height: 38 }}>✕</button>
+                </>
+              ) : (
+                <div style={{ flex: 1, fontSize: 13, color: C.text }}>{f.name} — {fmtMoney(f.price, lang)}</div>
+              )}
             </div>
           ))}
-          <button onClick={addFeatureRow}
-            style={{ background: "transparent", border: `1px dashed ${C.border}`, borderRadius: 8, color: C.muted, cursor: "pointer", padding: "8px 14px", fontSize: 13, marginBottom: 12 }}>
-            + {t(lang, "dashboard.orderForm.addFeature")}
-          </button>
+          {canManage && (
+            <>
+              <button onClick={addFeatureRow}
+                style={{ background: "transparent", border: `1px dashed ${C.border}`, borderRadius: 8, color: C.muted, cursor: "pointer", padding: "8px 14px", fontSize: 13, marginBottom: 12 }}>
+                + {t(lang, "dashboard.orderForm.addFeature")}
+              </button>
 
-          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 14 }}>
-            <span style={{ fontSize: 13, color: C.muted }}>{t(lang, "dashboard.orderForm.budget")}:</span>
-            <input type="number" value={budgetInput} onChange={(e) => setBudgetInput(e.target.value)} style={{ ...inputStyle, width: 140 }} />
-            <MiniBtn onClick={() => setBudgetInput(String(featuresTotal))}>{t(lang, "dashboard.syncBudgetToFeatures")} ({fmtMoney(featuresTotal, lang)})</MiniBtn>
-            {featuresDirty && <Btn onClick={saveFeatures} style={{ opacity: busy ? 0.6 : 1 }}>{t(lang, "dashboard.save")}</Btn>}
-          </div>
+              <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 14 }}>
+                <span style={{ fontSize: 13, color: C.muted }}>{t(lang, "dashboard.orderForm.budget")}:</span>
+                <input type="number" value={budgetInput} onChange={(e) => setBudgetInput(e.target.value)} style={{ ...inputStyle, width: 140 }} />
+                <MiniBtn onClick={() => setBudgetInput(String(featuresTotal))}>{t(lang, "dashboard.syncBudgetToFeatures")} ({fmtMoney(featuresTotal, lang)})</MiniBtn>
+                {featuresDirty && <Btn onClick={saveFeatures} style={{ opacity: busy ? 0.6 : 1 }}>{t(lang, "dashboard.save")}</Btn>}
+              </div>
+            </>
+          )}
 
           <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", margin: "16px 0 8px" }}>{t(lang, "dashboard.paymentsTitle")}</div>
           {details.payments.length === 0 && <div style={{ fontSize: 13, color: C.dim }}>—</div>}
@@ -602,11 +929,13 @@ function OrderCard({ order, lang, reload }) {
             </div>
           ))}
 
-          <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
-            <input type="number" placeholder={t(lang, "dashboard.payments.amount")} value={payAmount} onChange={(e) => setPayAmount(e.target.value)} style={{ ...inputStyle, width: 140 }} />
-            <input placeholder={t(lang, "dashboard.payments.note")} value={payNote} onChange={(e) => setPayNote(e.target.value)} style={{ ...inputStyle, width: 200 }} />
-            <Btn onClick={addPayment} style={{ opacity: busy || !payAmount ? 0.6 : 1 }}>{t(lang, "dashboard.payments.record")}</Btn>
-          </div>
+          {canManage && (
+            <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
+              <input type="number" placeholder={t(lang, "dashboard.payments.amount")} value={payAmount} onChange={(e) => setPayAmount(e.target.value)} style={{ ...inputStyle, width: 140 }} />
+              <input placeholder={t(lang, "dashboard.payments.note")} value={payNote} onChange={(e) => setPayNote(e.target.value)} style={{ ...inputStyle, width: 200 }} />
+              <Btn onClick={addPayment} style={{ opacity: busy || !payAmount ? 0.6 : 1 }}>{t(lang, "dashboard.payments.record")}</Btn>
+            </div>
+          )}
         </div>
       )}
     </Card>
@@ -615,8 +944,11 @@ function OrderCard({ order, lang, reload }) {
 
 // ── REQUESTS (LEADS) ──────────────────────────────────────────────────────────
 const REQUEST_STATUS_COLORS = { pending: "#F59E0B", approved: "#22C55E", cancelled: "#EF4444" };
+const REQUEST_KIND_COLORS = { new: "#6C63FF", debugging: "#EF4444", developing: "#F59E0B" };
 
-function RequestsTab({ lang, requests, reload }) {
+function RequestsTab({ lang, requests, reload, user }) {
+  const canManage = user?.role !== "developer";
+  const [viewing, setViewing] = useState(null);     // request shown in the read-only details modal
   const [approving, setApproving] = useState(null); // request shown in the approve modal
   const [created, setCreated] = useState(null);     // { order, privateKey } after approval
   const [busyId, setBusyId] = useState(null);
@@ -663,6 +995,21 @@ function RequestsTab({ lang, requests, reload }) {
     <div>
       <DashTitle>{t(lang, "dashboard.requests")}</DashTitle>
 
+      {viewing && (
+        <RequestDetailsModal
+          lang={lang}
+          request={viewing}
+          optLabel={(group, value) => optLabel(group, value, viewing.currency)}
+          busy={busyId === viewing.id}
+          canManage={canManage}
+          onClose={() => setViewing(null)}
+          onApprove={() => { setApproving(viewing); setViewing(null); }}
+          onReject={() => setStatus(viewing, "cancelled").then(() => setViewing(null))}
+          onRestore={() => setStatus(viewing, "pending").then(() => setViewing(null))}
+          onDelete={() => { setViewing(null); deleteRequest(viewing); }}
+        />
+      )}
+
       {approving && (
         <ApproveRequestModal
           lang={lang}
@@ -683,7 +1030,7 @@ function RequestsTab({ lang, requests, reload }) {
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
               <tr>
-                {["name", "phone", "type", "goal", "budget", "note", "date", "status", "actions"].map((f) => (
+                {["name", "phone", "kind", "type", "goal", "budget", "date", "status", "actions"].map((f) => (
                   <Th key={f} lang={lang}>{t(lang, `dashboard.requestsTable.${f}`)}</Th>
                 ))}
               </tr>
@@ -691,6 +1038,7 @@ function RequestsTab({ lang, requests, reload }) {
             <tbody>
               {requests.map((r) => {
                 const status = r.status || "pending";
+                const kind = r.kind || "new";
                 const busy = busyId === r.id;
                 return (
                   <tr key={r.id} style={{ opacity: busy ? 0.5 : 1 }}>
@@ -699,28 +1047,14 @@ function RequestsTab({ lang, requests, reload }) {
                       {r.email && <div style={{ fontSize: 12, color: C.muted, fontWeight: 400 }}>{r.email}</div>}
                     </Td>
                     <Td style={{ direction: "ltr" }}>{r.phone}</Td>
+                    <Td><Badge label={t(lang, `dashboard.requestKind.${kind}`)} color={REQUEST_KIND_COLORS[kind] || C.accent} /></Td>
                     <Td>{optLabel("type", r.projectType)}</Td>
                     <Td>{optLabel("goal", r.goal)}</Td>
                     <Td>{optLabel("budget", r.budget, r.currency)}</Td>
-                    <Td style={{ maxWidth: 220, fontSize: 13, color: C.muted, whiteSpace: "pre-line" }}>
-                      {r.note || "—"}
-                      {r.files?.length > 0 && <div style={{ marginTop: 4, fontSize: 12, color: C.accent }}>📎 {r.files.length}</div>}
-                    </Td>
                     <Td style={{ whiteSpace: "nowrap", fontSize: 13, color: C.muted }}>{fmtDate(r.createdAt)}</Td>
                     <Td><Badge label={t(lang, `dashboard.requestStatus.${status}`)} color={REQUEST_STATUS_COLORS[status] || C.accent} /></Td>
                     <Td style={{ whiteSpace: "nowrap" }}>
-                      {status === "pending" && (
-                        <div style={{ display: "flex", gap: 6 }}>
-                          <MiniBtn onClick={() => !busy && setApproving(r)} success>{t(lang, "dashboard.requestActions.approve")}</MiniBtn>
-                          <MiniBtn onClick={() => !busy && setStatus(r, "cancelled")} danger>{t(lang, "dashboard.requestActions.cancel")}</MiniBtn>
-                        </div>
-                      )}
-                      {status === "cancelled" && (
-                        <div style={{ display: "flex", gap: 6 }}>
-                          <MiniBtn onClick={() => !busy && setStatus(r, "pending")}>{t(lang, "dashboard.requestActions.restore")}</MiniBtn>
-                          <MiniBtn onClick={() => !busy && deleteRequest(r)} danger>{t(lang, "dashboard.requestActions.delete")}</MiniBtn>
-                        </div>
-                      )}
+                      <MiniBtn onClick={() => !busy && setViewing(r)}>{t(lang, "dashboard.requestActions.viewDetails")}</MiniBtn>
                     </Td>
                   </tr>
                 );
@@ -733,9 +1067,78 @@ function RequestsTab({ lang, requests, reload }) {
   );
 }
 
+// نافذة تفاصيل الطلب: تعرض كل الحقول (بما فيها الملاحظة والمرفقات) للقراءة فقط،
+// وتحوي كل إجراءات الحالة بدل الأزرار المتفرقة في الجدول.
+function RequestDetailsModal({ lang, request, optLabel, busy, canManage = true, onClose, onApprove, onReject, onRestore, onDelete }) {
+  const status = request.status || "pending";
+  const kind = request.kind || "new";
+
+  const Row = ({ label, value }) => value ? (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{ fontSize: 12, color: C.muted, textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>{label}</div>
+      <div style={{ fontSize: 14, color: "#fff", whiteSpace: "pre-line" }}>{value}</div>
+    </div>
+  ) : null;
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.7)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+      <Card style={{ padding: 32, maxWidth: 560, width: "100%", border: `1px solid ${C.border}`, maxHeight: "90vh", overflowY: "auto" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20, gap: 12 }}>
+          <div style={{ fontFamily: "Syne, sans-serif", fontWeight: 800, fontSize: 20, color: "#fff" }}>
+            {t(lang, "dashboard.requestActions.detailsTitle")}
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <Badge label={t(lang, `dashboard.requestKind.${kind}`)} color={REQUEST_KIND_COLORS[kind] || C.accent} />
+            <Badge label={t(lang, `dashboard.requestStatus.${status}`)} color={REQUEST_STATUS_COLORS[status] || C.accent} />
+          </div>
+        </div>
+
+        <Row label={t(lang, "dashboard.requestsTable.name")} value={request.name} />
+        <Row label={t(lang, "dashboard.requestsTable.email")} value={request.email} />
+        <Row label={t(lang, "dashboard.requestsTable.phone")} value={request.phone} />
+        <Row label={t(lang, "dashboard.requestsTable.type")} value={optLabel("type", request.projectType)} />
+        <Row label={t(lang, "dashboard.requestsTable.goal")} value={request.goal ? optLabel("goal", request.goal) : null} />
+        <Row label={t(lang, "dashboard.requestsTable.budget")} value={optLabel("budget", request.budget)} />
+        <Row label={t(lang, "dashboard.requestsTable.note")} value={request.note} />
+        <Row label={t(lang, "dashboard.requestsTable.date")} value={fmtDate(request.createdAt)} />
+
+        {request.files?.length > 0 && (
+          <div style={{ marginBottom: 20 }}>
+            <div style={{ fontSize: 12, color: C.muted, textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>{t(lang, "dashboard.requestActions.attachments")}</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {request.files.map((f) => (
+                <a key={f.name} href={f.data} download={f.name} style={{ fontSize: 13, color: C.accent, textDecoration: "none" }}>
+                  📎 {f.name}
+                </a>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 8 }}>
+          {canManage && status === "pending" && (
+            <>
+              <Btn onClick={onApprove} style={{ opacity: busy ? 0.6 : 1 }}>{t(lang, "dashboard.requestActions.approve")}</Btn>
+              <Btn variant="outline" onClick={onReject} style={{ opacity: busy ? 0.6 : 1, color: "#EF4444" }}>{t(lang, "dashboard.requestActions.reject")}</Btn>
+            </>
+          )}
+          {canManage && status === "cancelled" && (
+            <>
+              <Btn onClick={onRestore} style={{ opacity: busy ? 0.6 : 1 }}>{t(lang, "dashboard.requestActions.restore")}</Btn>
+              <Btn variant="outline" onClick={onDelete} style={{ opacity: busy ? 0.6 : 1, color: "#EF4444" }}>{t(lang, "dashboard.requestActions.delete")}</Btn>
+            </>
+          )}
+          <Btn variant="outline" onClick={onClose}>{t(lang, "dashboard.requestActions.close")}</Btn>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
 // نافذة قبول الطلب: تعرض كل التفاصيل قابلة للتعديل، ثم تُنشئ المشروع
 // وتضيف العميل إلى CRM (المشاريع هي مصدر بيانات CRM) وتُظهر مفتاح التتبع.
 function ApproveRequestModal({ lang, request, optLabel, onClose, onApproved }) {
+  const [kind, setKind] = useState(request.kind || "new");
   const [projectType, setProjectType] = useState(request.projectType ? optLabel("type", request.projectType) : "");
   const [description, setDescription] = useState([
     request.goal && `${t(lang, "dashboard.requestsTable.goal")}: ${optLabel("goal", request.goal)}`,
@@ -752,7 +1155,7 @@ function ApproveRequestModal({ lang, request, optLabel, onClose, onApproved }) {
     try {
       const data = await api(`/requests/${request.id}/approve`, {
         method: "POST",
-        body: { projectType, description, totalBudget: Number(budget) || 0 },
+        body: { kind, projectType, description, totalBudget: Number(budget) || 0 },
       });
       onApproved(data);
     } catch (err) {
@@ -787,6 +1190,11 @@ function ApproveRequestModal({ lang, request, optLabel, onClose, onApproved }) {
             </div>
           </div>
         )}
+
+        <label style={{ fontSize: 13, color: C.muted, display: "block", marginBottom: 6 }}>{t(lang, "dashboard.orderForm.kind")}</label>
+        <select value={kind} onChange={(e) => setKind(e.target.value)} style={{ ...inputStyle, marginBottom: 14 }}>
+          {REQUEST_KINDS.map((k) => <option key={k.value} value={k.value}>{t(lang, `dashboard.requestKind.${k.value}`)}</option>)}
+        </select>
 
         <label style={{ fontSize: 13, color: C.muted, display: "block", marginBottom: 6 }}>{t(lang, "dashboard.orderForm.projectType")}</label>
         <input value={projectType} onChange={(e) => setProjectType(e.target.value)} style={{ ...inputStyle, marginBottom: 14 }} />
@@ -848,7 +1256,8 @@ function ClientsTab({ lang, orders }) {
 }
 
 // ── INVOICES (PAYMENTS) ───────────────────────────────────────────────────────
-function InvoicesTab({ lang, orders, payments, reload }) {
+function InvoicesTab({ lang, orders, payments, reload, user }) {
+  const canManage = user?.role !== "developer";
   const [orderId, setOrderId] = useState("");
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
@@ -873,19 +1282,21 @@ function InvoicesTab({ lang, orders, payments, reload }) {
     <div>
       <DashTitle>{t(lang, "dashboard.invoices")}</DashTitle>
 
-      <Card style={{ padding: 20, marginBottom: 20 }}>
-        <div style={{ fontSize: 14, fontWeight: 700, color: "#fff", marginBottom: 12 }}>{t(lang, "dashboard.payments.recordPayment")}</div>
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <select value={orderId} onChange={(e) => setOrderId(e.target.value)} style={{ ...inputStyle, width: "auto", minWidth: 220 }}>
-            <option value="">{t(lang, "dashboard.payments.selectOrder")}</option>
-            {orders.map((o) => <option key={o.id} value={o.id}>{o.uid} — {o.clientName}</option>)}
-          </select>
-          <input type="number" placeholder={t(lang, "dashboard.payments.amount")} value={amount} onChange={(e) => setAmount(e.target.value)} style={{ ...inputStyle, width: 140 }} />
-          <input placeholder={t(lang, "dashboard.payments.note")} value={note} onChange={(e) => setNote(e.target.value)} style={{ ...inputStyle, width: 200 }} />
-          <Btn onClick={record} style={{ opacity: busy || !orderId || !amount ? 0.6 : 1 }}>{t(lang, "dashboard.payments.record")}</Btn>
-        </div>
-        {error && <div style={{ color: "#F87171", fontSize: 13, marginTop: 10 }}>{error}</div>}
-      </Card>
+      {canManage && (
+        <Card style={{ padding: 20, marginBottom: 20 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: "#fff", marginBottom: 12 }}>{t(lang, "dashboard.payments.recordPayment")}</div>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <select value={orderId} onChange={(e) => setOrderId(e.target.value)} style={{ ...inputStyle, width: "auto", minWidth: 220 }}>
+              <option value="">{t(lang, "dashboard.payments.selectOrder")}</option>
+              {orders.map((o) => <option key={o.id} value={o.id}>{o.uid} — {o.clientName}</option>)}
+            </select>
+            <input type="number" placeholder={t(lang, "dashboard.payments.amount")} value={amount} onChange={(e) => setAmount(e.target.value)} style={{ ...inputStyle, width: 140 }} />
+            <input placeholder={t(lang, "dashboard.payments.note")} value={note} onChange={(e) => setNote(e.target.value)} style={{ ...inputStyle, width: 200 }} />
+            <Btn onClick={record} style={{ opacity: busy || !orderId || !amount ? 0.6 : 1 }}>{t(lang, "dashboard.payments.record")}</Btn>
+          </div>
+          {error && <div style={{ color: "#F87171", fontSize: 13, marginTop: 10 }}>{error}</div>}
+        </Card>
+      )}
 
       {payments.length === 0 ? (
         <Card style={{ padding: 28, color: C.muted, fontSize: 14 }}>{t(lang, "dashboard.noPayments")}</Card>
@@ -1057,7 +1468,8 @@ function KanbanTab({ lang, tasks, reload }) {
 }
 
 // ── PORTFOLIO (public "our work" showcase — separate from client orders) ──────
-function PortfolioTab({ lang, portfolio, reload }) {
+function PortfolioTab({ lang, portfolio, reload, user }) {
+  const canManage = user?.role !== "developer";
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null); // full project being edited, or null for "new"
 
@@ -1077,11 +1489,11 @@ function PortfolioTab({ lang, portfolio, reload }) {
 
   return (
     <div>
-      <DashTitle action={<Btn onClick={() => (showForm ? close() : openNew())}>{showForm ? t(lang, "dashboard.portfolioForm.cancel") : t(lang, "dashboard.portfolioForm.newProject")}</Btn>}>
+      <DashTitle action={canManage && <Btn onClick={() => (showForm ? close() : openNew())}>{showForm ? t(lang, "dashboard.portfolioForm.cancel") : t(lang, "dashboard.portfolioForm.newProject")}</Btn>}>
         {t(lang, "dashboard.portfolio")}
       </DashTitle>
 
-      {showForm && (
+      {showForm && canManage && (
         <PortfolioForm lang={lang} project={editing} onSaved={() => { close(); reload(); }} onCancel={close} />
       )}
 
@@ -1102,10 +1514,12 @@ function PortfolioTab({ lang, portfolio, reload }) {
                   <span key={s} style={{ background: C.accentDim, color: C.accentLight, borderRadius: 6, padding: "2px 8px", fontSize: 10, fontWeight: 600 }}>{s}</span>
                 ))}
               </div>
-              <div style={{ display: "flex", gap: 6 }}>
-                <MiniBtn onClick={() => openEdit(p)}>✏️</MiniBtn>
-                <MiniBtn onClick={() => remove(p)} danger>🗑️</MiniBtn>
-              </div>
+              {canManage && (
+                <div style={{ display: "flex", gap: 6 }}>
+                  <MiniBtn onClick={() => openEdit(p)}>✏️</MiniBtn>
+                  <MiniBtn onClick={() => remove(p)} danger>🗑️</MiniBtn>
+                </div>
+              )}
             </div>
           </Card>
         ))}
@@ -1173,7 +1587,8 @@ function PortfolioForm({ lang, project, onSaved, onCancel }) {
       <input value={stackText} onChange={(e) => setStackText(e.target.value)} placeholder={f.stackPlaceholder} style={{ ...inputStyle, marginBottom: 14 }} />
 
       <label style={{ fontSize: 13, color: C.muted, display: "block", marginBottom: 6 }}>{f.description}</label>
-      <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} style={{ ...inputStyle, resize: "vertical", marginBottom: 14 }} />
+      <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} style={{ ...inputStyle, resize: "vertical", marginBottom: 6 }} />
+      <div style={{ fontSize: 12, color: C.dim, marginBottom: 14 }}>{f.descriptionHint}</div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 14 }}>
         <div>
@@ -1224,7 +1639,8 @@ function PortfolioForm({ lang, project, onSaved, onCancel }) {
 // ── TESTIMONIALS (public reviews, admin-approved) ─────────────────────────────
 const TESTIMONIAL_STATUS_COLORS = { pending: "#F59E0B", approved: "#22C55E", rejected: "#EF4444" };
 
-function TestimonialsTab({ lang, testimonials, reload }) {
+function TestimonialsTab({ lang, testimonials, reload, user }) {
+  const canManage = user?.role !== "developer";
   const [busyId, setBusyId] = useState(null);
   const [error, setError] = useState("");
 
@@ -1284,11 +1700,13 @@ function TestimonialsTab({ lang, testimonials, reload }) {
                     <Td style={{ whiteSpace: "nowrap", fontSize: 13, color: C.muted }}>{fmtDate(item.createdAt)}</Td>
                     <Td><Badge label={t(lang, `dashboard.testimonialsTable.statusLabels.${status}`)} color={TESTIMONIAL_STATUS_COLORS[status] || C.accent} /></Td>
                     <Td style={{ whiteSpace: "nowrap" }}>
-                      <div style={{ display: "flex", gap: 6 }}>
-                        {status !== "approved" && <MiniBtn onClick={() => !busy && setStatus(item, "approved")} success>{t(lang, "dashboard.requestActions.approve")}</MiniBtn>}
-                        {status !== "rejected" && <MiniBtn onClick={() => !busy && setStatus(item, "rejected")} danger>{t(lang, "dashboard.requestActions.cancel")}</MiniBtn>}
-                        <MiniBtn onClick={() => !busy && remove(item)} danger>{t(lang, "dashboard.requestActions.delete")}</MiniBtn>
-                      </div>
+                      {canManage && (
+                        <div style={{ display: "flex", gap: 6 }}>
+                          {status !== "approved" && <MiniBtn onClick={() => !busy && setStatus(item, "approved")} success>{t(lang, "dashboard.requestActions.approve")}</MiniBtn>}
+                          {status !== "rejected" && <MiniBtn onClick={() => !busy && setStatus(item, "rejected")} danger>{t(lang, "dashboard.requestActions.cancel")}</MiniBtn>}
+                          <MiniBtn onClick={() => !busy && remove(item)} danger>{t(lang, "dashboard.requestActions.delete")}</MiniBtn>
+                        </div>
+                      )}
                     </Td>
                   </tr>
                 );

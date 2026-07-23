@@ -27,6 +27,7 @@ const userSchema = new mongoose.Schema(
     email: { type: String, required: true, unique: true },
     password: { type: String, required: true },
     role: { type: String, default: null },
+    mustChangePassword: { type: Boolean, default: false },
     createdAt: { type: Date, default: Date.now },
   },
   { collection: 'users' }
@@ -41,6 +42,7 @@ const orderSchema = new mongoose.Schema(
     clientEmail: { type: String, default: '' },
     projectType: { type: String, default: '' },
     description: { type: String, default: '' },
+    kind: { type: String, default: 'new' },
     status: { type: String, default: 'analysis' },
     progressPct: { type: Number, default: 0 },
     totalBudget: { type: Number, default: 0 },
@@ -61,6 +63,7 @@ const requestSchema = new mongoose.Schema(
     goal: String,
     budget: String,
     currency: { type: String, default: 'dzd' },
+    kind: { type: String, default: 'new' },
     note: String,
     files: [{ name: String, type: String, data: String }],
     status: { type: String, default: 'pending' },
@@ -152,9 +155,9 @@ async function insert(text, params = []) {
 function mapUser(row) {
   if (!row) return null;
   if (row._id) {
-    return { id: row._id.toString(), name: row.name, email: row.email, password: row.password, role: row.role ?? null };
+    return { id: row._id.toString(), name: row.name, email: row.email, password: row.password, role: row.role ?? null, mustChangePassword: !!row.mustChangePassword };
   }
-  return { id: row.id, name: row.name, email: row.email, password: row.password, role: row.role ?? null };
+  return { id: row.id, name: row.name, email: row.email, password: row.password, role: row.role ?? null, mustChangePassword: !!row.must_change_password };
 }
 
 function mapOrder(row) {
@@ -167,6 +170,7 @@ function mapOrder(row) {
     clientEmail: row.client_email,
     projectType: row.project_type,
     description: row.description,
+    kind: row.kind || 'new',
     status: row.status,
     progressPct: row.progress_pct,
     totalBudget: row.total_budget,
@@ -187,6 +191,7 @@ function mapMongoOrder(doc) {
     clientEmail: doc.clientEmail,
     projectType: doc.projectType,
     description: doc.description,
+    kind: doc.kind || 'new',
     status: doc.status,
     progressPct: doc.progressPct,
     totalBudget: doc.totalBudget,
@@ -208,6 +213,7 @@ export async function initDb() {
         email TEXT NOT NULL UNIQUE,
         password TEXT NOT NULL,
         role TEXT,
+        must_change_password BOOLEAN NOT NULL DEFAULT FALSE,
         created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
       );
       CREATE TABLE IF NOT EXISTS orders (
@@ -219,6 +225,7 @@ export async function initDb() {
         client_email TEXT DEFAULT '',
         project_type TEXT DEFAULT '',
         description TEXT DEFAULT '',
+        kind TEXT NOT NULL DEFAULT 'new',
         status TEXT NOT NULL DEFAULT 'analysis',
         progress_pct INTEGER NOT NULL DEFAULT 0,
         total_budget REAL NOT NULL DEFAULT 0,
@@ -250,6 +257,7 @@ export async function initDb() {
         goal TEXT DEFAULT '',
         budget TEXT DEFAULT '',
         currency TEXT NOT NULL DEFAULT 'dzd',
+        kind TEXT NOT NULL DEFAULT 'new',
         note TEXT DEFAULT '',
         files TEXT DEFAULT '[]',
         status TEXT NOT NULL DEFAULT 'pending',
@@ -303,6 +311,7 @@ export async function initDb() {
         email TEXT NOT NULL UNIQUE,
         password TEXT NOT NULL,
         role TEXT,
+        must_change_password INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
       CREATE TABLE IF NOT EXISTS orders (
@@ -314,6 +323,7 @@ export async function initDb() {
         client_email TEXT DEFAULT '',
         project_type TEXT DEFAULT '',
         description TEXT DEFAULT '',
+        kind TEXT NOT NULL DEFAULT 'new',
         status TEXT NOT NULL DEFAULT 'analysis',
         progress_pct INTEGER NOT NULL DEFAULT 0,
         total_budget REAL NOT NULL DEFAULT 0,
@@ -345,6 +355,7 @@ export async function initDb() {
         goal TEXT DEFAULT '',
         budget TEXT DEFAULT '',
         currency TEXT NOT NULL DEFAULT 'dzd',
+        kind TEXT NOT NULL DEFAULT 'new',
         note TEXT DEFAULT '',
         files TEXT DEFAULT '[]',
         status TEXT NOT NULL DEFAULT 'pending',
@@ -391,14 +402,20 @@ async function migrate() {
     await OrderModel.updateMany({ status: 'delivery' }, { $set: { status: 'deployment' } });
     await RequestModel.updateMany({ status: { $exists: false } }, { $set: { status: 'pending' } });
     await RequestModel.updateMany({ currency: { $exists: false } }, { $set: { currency: 'dzd' } });
+    await RequestModel.updateMany({ kind: { $exists: false } }, { $set: { kind: 'new' } });
+    await OrderModel.updateMany({ kind: { $exists: false } }, { $set: { kind: 'new' } });
+    await UserModel.updateMany({ mustChangePassword: { $exists: false } }, { $set: { mustChangePassword: false } });
     return;
   }
   if (IS_PG) {
     await pgPool.query(`ALTER TABLE requests ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending'`);
     await pgPool.query(`ALTER TABLE requests ADD COLUMN IF NOT EXISTS currency TEXT NOT NULL DEFAULT 'dzd'`);
     await pgPool.query(`ALTER TABLE requests ADD COLUMN IF NOT EXISTS files TEXT DEFAULT '[]'`);
+    await pgPool.query(`ALTER TABLE requests ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'new'`);
     await pgPool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS created_by TEXT DEFAULT ''`);
+    await pgPool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'new'`);
     await pgPool.query(`ALTER TABLE payments ADD COLUMN IF NOT EXISTS created_by TEXT DEFAULT ''`);
+    await pgPool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE`);
   } else {
     try {
       await sqliteDb.exec(`ALTER TABLE requests ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'`);
@@ -410,10 +427,19 @@ async function migrate() {
       await sqliteDb.exec(`ALTER TABLE requests ADD COLUMN files TEXT DEFAULT '[]'`);
     } catch { /* column already exists */ }
     try {
+      await sqliteDb.exec(`ALTER TABLE requests ADD COLUMN kind TEXT NOT NULL DEFAULT 'new'`);
+    } catch { /* column already exists */ }
+    try {
       await sqliteDb.exec(`ALTER TABLE orders ADD COLUMN created_by TEXT DEFAULT ''`);
     } catch { /* column already exists */ }
     try {
+      await sqliteDb.exec(`ALTER TABLE orders ADD COLUMN kind TEXT NOT NULL DEFAULT 'new'`);
+    } catch { /* column already exists */ }
+    try {
       await sqliteDb.exec(`ALTER TABLE payments ADD COLUMN created_by TEXT DEFAULT ''`);
+    } catch { /* column already exists */ }
+    try {
+      await sqliteDb.exec(`ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0`);
     } catch { /* column already exists */ }
   }
   await run(`UPDATE orders SET status = 'deployment' WHERE status = 'delivery'`);
@@ -433,26 +459,31 @@ async function seedAdmin() {
     return;
   }
   const hashed = await bcrypt.hash(password, 10);
-  await createUser({ name, email, password: hashed, role: 'ceo' });
+  await createUser({ name, email, password: hashed, role: 'ceo', mustChangePassword: false });
   console.log(`[solvix] CEO account seeded: ${email}`);
 }
 
 // ── Users (staff) ─────────────────────────────────────────────────────────────
 export async function findUserByEmail(email) {
   if (IS_MONGO) return mapUser(await UserModel.findOne({ email }).lean());
-  return mapUser(await get('SELECT id, name, email, password, role FROM users WHERE email = $1', [email]));
+  return mapUser(await get('SELECT id, name, email, password, role, must_change_password FROM users WHERE email = $1', [email]));
 }
 
-export async function createUser({ name, email, password, role = null }) {
+export async function findUserById(id) {
+  if (IS_MONGO) return mapUser(await UserModel.findById(id).lean());
+  return mapUser(await get('SELECT id, name, email, password, role, must_change_password FROM users WHERE id = $1', [id]));
+}
+
+export async function createUser({ name, email, password, role = null, mustChangePassword = false }) {
   if (IS_MONGO) {
-    const saved = await new UserModel({ name, email, password, role }).save();
+    const saved = await new UserModel({ name, email, password, role, mustChangePassword }).save();
     return mapUser(saved.toObject());
   }
   const id = await insert(
-    'INSERT INTO users (name, email, password, role) VALUES ($1, $2, $3, $4)',
-    [name, email, password, role]
+    'INSERT INTO users (name, email, password, role, must_change_password) VALUES ($1, $2, $3, $4, $5)',
+    [name, email, password, role, mustChangePassword]
   );
-  return { id, name, email, role };
+  return { id, name, email, role, mustChangePassword };
 }
 
 export async function setUserRole(id, role) {
@@ -460,12 +491,18 @@ export async function setUserRole(id, role) {
   await run('UPDATE users SET role = $1 WHERE id = $2', [role, id]);
 }
 
+export async function updateUserPassword(id, hashedPassword, mustChangePassword) {
+  if (IS_MONGO) return void (await UserModel.updateOne({ _id: id }, { password: hashedPassword, mustChangePassword }));
+  await run('UPDATE users SET password = $1, must_change_password = $2 WHERE id = $3', [hashedPassword, mustChangePassword, id]);
+}
+
 export async function listStaff() {
   if (IS_MONGO) {
-    const docs = await UserModel.find({ role: { $in: ['ceo', 'developer'] } }).lean();
-    return docs.map((d) => ({ id: d._id.toString(), name: d.name, email: d.email, role: d.role }));
+    const docs = await UserModel.find({ role: { $in: ['ceo', 'admin', 'developer'] } }).lean();
+    return docs.map((d) => ({ id: d._id.toString(), name: d.name, email: d.email, role: d.role, mustChangePassword: !!d.mustChangePassword }));
   }
-  return all("SELECT id, name, email, role FROM users WHERE role IN ('ceo','developer') ORDER BY id", []);
+  const rows = await all("SELECT id, name, email, role, must_change_password FROM users WHERE role IN ('ceo','admin','developer') ORDER BY id", []);
+  return rows.map((r) => ({ id: r.id, name: r.name, email: r.email, role: r.role, mustChangePassword: !!r.must_change_password }));
 }
 
 export async function deleteUserById(id) {
@@ -480,20 +517,20 @@ const ORDER_PAID_SELECT = `
   FROM orders o`;
 
 export async function createOrder(data) {
-  const { uid, privateKeyHash, clientName, clientPhone = '', clientEmail = '', projectType = '', description = '', totalBudget = 0, features = [], createdBy = '' } = data;
+  const { uid, privateKeyHash, clientName, clientPhone = '', clientEmail = '', projectType = '', description = '', kind = 'new', totalBudget = 0, features = [], createdBy = '' } = data;
 
   if (IS_MONGO) {
     const saved = await new OrderModel({
-      uid, privateKeyHash, clientName, clientPhone, clientEmail, projectType, description,
+      uid, privateKeyHash, clientName, clientPhone, clientEmail, projectType, description, kind,
       totalBudget, features: features.map((f) => ({ name: f.name, price: Number(f.price) || 0 })), createdBy,
     }).save();
     return mapMongoOrder(saved.toObject());
   }
 
   const id = await insert(
-    `INSERT INTO orders (uid, private_key_hash, client_name, client_phone, client_email, project_type, description, total_budget, created_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-    [uid, privateKeyHash, clientName, clientPhone, clientEmail, projectType, description, totalBudget, createdBy]
+    `INSERT INTO orders (uid, private_key_hash, client_name, client_phone, client_email, project_type, description, kind, total_budget, created_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+    [uid, privateKeyHash, clientName, clientPhone, clientEmail, projectType, description, kind, totalBudget, createdBy]
   );
   for (const f of features) {
     await run('INSERT INTO order_features (order_id, name, price) VALUES ($1, $2, $3)', [id, f.name, Number(f.price) || 0]);
@@ -571,6 +608,15 @@ export async function updateOrder(id, fields) {
   return getOrderById(id);
 }
 
+export async function updateOrderKeyHash(id, privateKeyHash) {
+  if (IS_MONGO) {
+    await OrderModel.updateOne({ _id: id }, { $set: { privateKeyHash } });
+    return getOrderById(id);
+  }
+  await run('UPDATE orders SET private_key_hash = $1 WHERE id = $2', [privateKeyHash, id]);
+  return getOrderById(id);
+}
+
 export async function replaceOrderFeatures(id, features) {
   if (IS_MONGO) {
     await OrderModel.updateOne(
@@ -631,14 +677,14 @@ export async function listPayments() {
 }
 
 // ── Requests (leads from the public form) ─────────────────────────────────────
-export async function createRequest({ name, email = '', phone = '', projectType = '', goal = '', budget = '', currency = 'dzd', note = '', files = [] }) {
+export async function createRequest({ name, email = '', phone = '', projectType = '', goal = '', budget = '', currency = 'dzd', kind = 'new', note = '', files = [] }) {
   if (IS_MONGO) {
-    const saved = await new RequestModel({ name, email, phone, projectType, goal, budget, currency, note, files }).save();
+    const saved = await new RequestModel({ name, email, phone, projectType, goal, budget, currency, kind, note, files }).save();
     return { id: saved._id.toString() };
   }
   const id = await insert(
-    'INSERT INTO requests (name, email, phone, project_type, goal, budget, currency, note, files) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
-    [name, email, phone, projectType, goal, budget, currency, note, JSON.stringify(files)]
+    'INSERT INTO requests (name, email, phone, project_type, goal, budget, currency, kind, note, files) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)',
+    [name, email, phone, projectType, goal, budget, currency, kind, note, JSON.stringify(files)]
   );
   return { id };
 }
@@ -648,14 +694,14 @@ function mapRequest(r) {
   if (r._id) {
     return {
       id: r._id.toString(), name: r.name, email: r.email, phone: r.phone,
-      projectType: r.projectType, goal: r.goal, budget: r.budget, currency: r.currency || 'dzd', note: r.note,
+      projectType: r.projectType, goal: r.goal, budget: r.budget, currency: r.currency || 'dzd', kind: r.kind || 'new', note: r.note,
       files: r.files || [],
       status: r.status || 'pending', createdAt: r.createdAt,
     };
   }
   return {
     id: r.id, name: r.name, email: r.email, phone: r.phone,
-    projectType: r.project_type, goal: r.goal, budget: r.budget, currency: r.currency || 'dzd', note: r.note,
+    projectType: r.project_type, goal: r.goal, budget: r.budget, currency: r.currency || 'dzd', kind: r.kind || 'new', note: r.note,
     files: JSON.parse(r.files || '[]'),
     status: r.status || 'pending', createdAt: r.created_at,
   };
