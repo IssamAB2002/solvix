@@ -95,6 +95,8 @@ const portfolioSchema = new mongoose.Schema(
     problem: { type: String, default: '' },
     solution: { type: String, default: '' },
     images: [{ type: String }],
+    translations: { type: mongoose.Schema.Types.Mixed, default: {} },
+    sourceLang: { type: String, default: 'ar' },
     createdAt: { type: Date, default: Date.now },
   },
   { collection: 'portfolio_projects' }
@@ -282,6 +284,8 @@ export async function initDb() {
         problem TEXT DEFAULT '',
         solution TEXT DEFAULT '',
         images TEXT DEFAULT '[]',
+        translations TEXT DEFAULT '{}',
+        source_lang TEXT NOT NULL DEFAULT 'ar',
         created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
       );
       CREATE TABLE IF NOT EXISTS testimonials (
@@ -381,6 +385,8 @@ export async function initDb() {
         problem TEXT DEFAULT '',
         solution TEXT DEFAULT '',
         images TEXT DEFAULT '[]',
+        translations TEXT DEFAULT '{}',
+        source_lang TEXT NOT NULL DEFAULT 'ar',
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
       CREATE TABLE IF NOT EXISTS testimonials (
@@ -420,6 +426,8 @@ async function migrate() {
     await pgPool.query(`ALTER TABLE payments ADD COLUMN IF NOT EXISTS created_by TEXT DEFAULT ''`);
     await pgPool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE`);
     await pgPool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT DEFAULT ''`);
+    await pgPool.query(`ALTER TABLE portfolio_projects ADD COLUMN IF NOT EXISTS translations TEXT DEFAULT '{}'`);
+    await pgPool.query(`ALTER TABLE portfolio_projects ADD COLUMN IF NOT EXISTS source_lang TEXT NOT NULL DEFAULT 'ar'`);
   } else {
     try {
       await sqliteDb.exec(`ALTER TABLE requests ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'`);
@@ -447,6 +455,12 @@ async function migrate() {
     } catch { /* column already exists */ }
     try {
       await sqliteDb.exec(`ALTER TABLE users ADD COLUMN phone TEXT DEFAULT ''`);
+    } catch { /* column already exists */ }
+    try {
+      await sqliteDb.exec(`ALTER TABLE portfolio_projects ADD COLUMN translations TEXT DEFAULT '{}'`);
+    } catch { /* column already exists */ }
+    try {
+      await sqliteDb.exec(`ALTER TABLE portfolio_projects ADD COLUMN source_lang TEXT NOT NULL DEFAULT 'ar'`);
     } catch { /* column already exists */ }
   }
   await run(`UPDATE orders SET status = 'deployment' WHERE status = 'delivery'`);
@@ -773,6 +787,8 @@ function mapPortfolioProject(row) {
     problem: row.problem,
     solution: row.solution,
     images: JSON.parse(row.images || '[]'),
+    translations: JSON.parse(row.translations || '{}'),
+    sourceLang: row.source_lang || 'ar',
     createdAt: row.created_at,
   };
 }
@@ -788,6 +804,8 @@ function mapMongoPortfolio(doc) {
     problem: doc.problem,
     solution: doc.solution,
     images: doc.images || [],
+    translations: doc.translations || {},
+    sourceLang: doc.sourceLang || 'ar',
     createdAt: doc.createdAt,
   };
 }
@@ -811,23 +829,51 @@ export async function getPortfolioProjectBySlug(slug) {
   return mapPortfolioProject(await get('SELECT * FROM portfolio_projects WHERE slug = $1', [slug]));
 }
 
-export async function createPortfolioProject({ title, stack = [], description = '', problem = '', solution = '', images = [] }) {
+// Full project data minus images — used by the text-first detail route so the
+// response doesn't wait on (or ship) the base64 image payload.
+export async function getPortfolioProjectMetaBySlug(slug) {
+  if (IS_MONGO) {
+    const doc = await PortfolioModel.findOne({ slug }).select('-images').lean();
+    if (!doc) return null;
+    const { images, ...meta } = mapMongoPortfolio({ ...doc, images: [] });
+    return meta;
+  }
+  const row = await get(
+    'SELECT id, title, slug, stack, description, problem, solution, translations, source_lang, created_at FROM portfolio_projects WHERE slug = $1',
+    [slug]
+  );
+  if (!row) return null;
+  const { images, ...meta } = mapPortfolioProject({ ...row, images: '[]' });
+  return meta;
+}
+
+// Just the images array — fetched separately so it can lazy-load after text.
+export async function getPortfolioProjectImagesBySlug(slug) {
+  if (IS_MONGO) {
+    const doc = await PortfolioModel.findOne({ slug }).select('images').lean();
+    return doc ? (doc.images || []) : null;
+  }
+  const row = await get('SELECT images FROM portfolio_projects WHERE slug = $1', [slug]);
+  return row ? JSON.parse(row.images || '[]') : null;
+}
+
+export async function createPortfolioProject({ title, stack = [], description = '', problem = '', solution = '', images = [], translations = {}, sourceLang = 'ar' }) {
   const slug = await generateSlug(title);
   if (IS_MONGO) {
-    const saved = await new PortfolioModel({ title, slug, stack, description, problem, solution, images }).save();
+    const saved = await new PortfolioModel({ title, slug, stack, description, problem, solution, images, translations, sourceLang }).save();
     return mapMongoPortfolio(saved.toObject());
   }
   const id = await insert(
-    `INSERT INTO portfolio_projects (title, slug, stack, description, problem, solution, images)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-    [title, slug, JSON.stringify(stack), description, problem, solution, JSON.stringify(images)]
+    `INSERT INTO portfolio_projects (title, slug, stack, description, problem, solution, images, translations, source_lang)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+    [title, slug, JSON.stringify(stack), description, problem, solution, JSON.stringify(images), JSON.stringify(translations), sourceLang]
   );
   return getPortfolioProjectById(id);
 }
 
 const PORTFOLIO_UPDATABLE = {
   title: 'title', stack: 'stack', description: 'description',
-  problem: 'problem', solution: 'solution', images: 'images',
+  problem: 'problem', solution: 'solution', images: 'images', translations: 'translations',
 };
 
 export async function updatePortfolioProject(id, fields) {
@@ -839,9 +885,22 @@ export async function updatePortfolioProject(id, fields) {
   }
   if (entries.length) {
     const sets = entries.map(([k], i) => `${PORTFOLIO_UPDATABLE[k]} = $${i + 1}`).join(', ');
-    const params = entries.map(([k, v]) => (k === 'stack' || k === 'images') ? JSON.stringify(v) : v);
+    const params = entries.map(([k, v]) => (k === 'stack' || k === 'images' || k === 'translations') ? JSON.stringify(v) : v);
     await run(`UPDATE portfolio_projects SET ${sets} WHERE id = $${entries.length + 1}`, [...params, id]);
   }
+  return getPortfolioProjectById(id);
+}
+
+// One-time backfill for legacy projects with no translations yet: lets the
+// admin correct a mis-migrated sourceLang before the first translation runs.
+export async function setPortfolioProjectTranslations(id, sourceLang, translations) {
+  if (IS_MONGO) {
+    await PortfolioModel.updateOne({ _id: id }, { $set: { sourceLang, translations } });
+    return getPortfolioProjectById(id);
+  }
+  await run('UPDATE portfolio_projects SET source_lang = $1, translations = $2 WHERE id = $3', [
+    sourceLang, JSON.stringify(translations), id,
+  ]);
   return getPortfolioProjectById(id);
 }
 

@@ -4,26 +4,40 @@
 
 import { useState, useEffect, useRef } from "react";
 import C from "../styles/colors";
-import { Card, Btn } from "../components/UI";
+import { Card, Btn, Spinner } from "../components/UI";
 import MarkdownLite from "../components/Markdown";
 import { t } from "../i18n";
 import { api } from "../api";
+import { pickText } from "../utils/projectText";
 
 const AUTOPLAY_MS = 3500;
 
 export default function ProjectDetails({ slug, go, lang }) {
   const [project, setProject] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [metaLoading, setMetaLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
+  const [images, setImages] = useState([]);
+  const [imagesLoading, setImagesLoading] = useState(true);
 
   useEffect(() => {
-    setLoading(true);
+    setMetaLoading(true);
     setNotFound(false);
     api(`/portfolio/${slug}`, { auth: false })
       .then((data) => setProject(data.project))
       .catch(() => setNotFound(true))
-      .finally(() => setLoading(false));
+      .finally(() => setMetaLoading(false));
   }, [slug]);
+
+  useEffect(() => {
+    setImagesLoading(true);
+    setImages([]);
+    api(`/portfolio/${slug}/images`, { auth: false })
+      .then((data) => setImages(data.images || []))
+      .catch(() => setImages([]))
+      .finally(() => setImagesLoading(false));
+  }, [slug]);
+
+  const text = pickText(project, lang);
 
   return (
     <div dir={lang === "ar" ? "rtl" : "ltr"} style={{ maxWidth: 900, margin: "0 auto", padding: "110px 24px 80px" }}>
@@ -34,15 +48,19 @@ export default function ProjectDetails({ slug, go, lang }) {
         {t(lang, "projects.back")}
       </button>
 
-      {loading && <Card style={{ padding: 40, color: C.muted, textAlign: "center" }}>...</Card>}
+      {metaLoading && (
+        <Card style={{ padding: 40, display: "flex", justifyContent: "center" }}>
+          <Spinner />
+        </Card>
+      )}
 
-      {!loading && (notFound || !project) && (
+      {!metaLoading && (notFound || !project) && (
         <Card style={{ padding: 40, color: C.muted, textAlign: "center" }}>{t(lang, "projects.notFound")}</Card>
       )}
 
-      {!loading && project && (
+      {!metaLoading && project && (
         <>
-          <Carousel images={project.images} />
+          <Carousel images={images} loading={imagesLoading} />
 
           <h1 style={{ fontFamily: "Syne, sans-serif", fontWeight: 800, fontSize: "clamp(26px,3vw,38px)", color: "#fff", marginTop: 28, marginBottom: 14 }}>
             {project.title}
@@ -58,28 +76,28 @@ export default function ProjectDetails({ slug, go, lang }) {
             </div>
           )}
 
-          {project.description && (
+          {text.description && (
             <Card style={{ padding: 24, marginBottom: 20 }}>
-              <div style={{ color: C.text, fontSize: 15 }}><MarkdownLite text={project.description} /></div>
+              <div style={{ color: C.text, fontSize: 15 }}><MarkdownLite text={text.description} /></div>
             </Card>
           )}
 
-          {(project.problem || project.solution) && (
+          {(text.problem || text.solution) && (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(260px,1fr))", gap: 16, marginBottom: 32 }}>
-              {project.problem && (
+              {text.problem && (
                 <Card style={{ padding: 22, borderColor: "rgba(239,68,68,.25)" }}>
                   <div style={{ fontSize: 12, color: "#EF4444", fontWeight: 700, letterSpacing: 1, textTransform: "uppercase", marginBottom: 10 }}>
                     🔴 {t(lang, "projects.problem")}
                   </div>
-                  <div style={{ fontSize: 14, color: C.text, lineHeight: 1.8, whiteSpace: "pre-line" }}>{project.problem}</div>
+                  <div style={{ fontSize: 14, color: C.text, lineHeight: 1.8, whiteSpace: "pre-line" }}>{text.problem}</div>
                 </Card>
               )}
-              {project.solution && (
+              {text.solution && (
                 <Card style={{ padding: 22, borderColor: "rgba(34,197,94,.25)" }}>
                   <div style={{ fontSize: 12, color: C.green, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase", marginBottom: 10 }}>
                     🟢 {t(lang, "projects.solution")}
                   </div>
-                  <div style={{ fontSize: 14, color: C.text, lineHeight: 1.8, whiteSpace: "pre-line" }}>{project.solution}</div>
+                  <div style={{ fontSize: 14, color: C.text, lineHeight: 1.8, whiteSpace: "pre-line" }}>{text.solution}</div>
                 </Card>
               )}
             </div>
@@ -96,7 +114,7 @@ export default function ProjectDetails({ slug, go, lang }) {
   );
 }
 
-function Carousel({ images = [] }) {
+function Carousel({ images = [], loading = false }) {
   const [index, setIndex] = useState(0);
   const [paused, setPaused] = useState(false);
   const [lightbox, setLightbox] = useState(false);
@@ -120,7 +138,7 @@ function Carousel({ images = [] }) {
         height: 360, borderRadius: 18, background: `linear-gradient(135deg, ${C.accentDim}, ${C.surface})`,
         display: "flex", alignItems: "center", justifyContent: "center", fontSize: 64,
       }}>
-        🖼️
+        {loading ? <Spinner /> : "🖼️"}
       </div>
     );
   }

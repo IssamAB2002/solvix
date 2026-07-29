@@ -162,6 +162,21 @@ export const Btn = ({ children, onClick, style = {}, variant = "primary" }) => {
   );
 };
 
+// مؤشر تحميل دوّار
+export const Spinner = ({ size = 32, style = {} }) => (
+  <div
+    style={{
+      width: size,
+      height: size,
+      border: `3px solid ${C.border}`,
+      borderTopColor: C.accent,
+      borderRadius: "50%",
+      animation: "solvix-spin .8s linear infinite",
+      ...style,
+    }}
+  />
+);
+
 // بطاقة بخلفية داكنة وحدود
 export const Card = ({ children, style = {}, ...rest }) => (
   <div

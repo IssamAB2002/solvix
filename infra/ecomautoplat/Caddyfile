@@ -45,6 +45,19 @@ solvix-app.online, www.solvix-app.online {
         reverse_proxy solvix-backend:4000
     }
 
+    # Link-preview crawlers (Meta/WhatsApp/Twitter/etc.) fetch raw HTML and never
+    # run the SPA's JS, so /projects/:slug would show no title/image in ad and
+    # share previews. Route just those user agents to the backend's SSR-lite
+    # OG-tag route (see backend/src/routes/share.js); everyone else still gets
+    # the normal React app below.
+    @socialbot {
+        path /projects/*
+        header_regexp User-Agent (?i)(facebookexternalhit|Facebot|Twitterbot|LinkedInBot|WhatsApp|TelegramBot|Slackbot|Discordbot|Googlebot|bingbot)
+    }
+    handle @socialbot {
+        reverse_proxy solvix-backend:4000
+    }
+
     handle {
         root * /srv/solvix-frontend
         file_server

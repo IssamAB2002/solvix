@@ -6,13 +6,17 @@
 import express from 'express';
 import { requireAdmin } from './auth.js';
 import {
-  listPortfolioProjects, getPortfolioProjectById, getPortfolioProjectBySlug,
+  listPortfolioProjects, getPortfolioProjectById,
+  getPortfolioProjectMetaBySlug, getPortfolioProjectImagesBySlug,
   createPortfolioProject, updatePortfolioProject, deletePortfolioProject,
+  setPortfolioProjectTranslations,
 } from '../db.js';
+import { translateProjectText } from '../translate.js';
 
 const router = express.Router();
 
 const MAX_IMAGES = 10;
+const VALID_LANGS = ['ar', 'en', 'fr'];
 
 function sanitizeStack(stack) {
   if (!Array.isArray(stack)) return [];
@@ -31,29 +35,62 @@ router.get('/', async (_req, res) => {
     projects: projects.map((p) => ({
       id: p.id, title: p.title, slug: p.slug, stack: p.stack,
       description: p.description, cover: p.images[0] || null, createdAt: p.createdAt,
+      translations: p.translations, sourceLang: p.sourceLang,
     })),
   });
 });
 
+// Text-first detail: no images payload — see GET /:slug/images below.
 router.get('/:slug', async (req, res) => {
-  const project = await getPortfolioProjectBySlug(req.params.slug);
+  const project = await getPortfolioProjectMetaBySlug(req.params.slug);
   if (!project) return res.status(404).json({ error: 'المشروع غير موجود.' });
   res.json({ project });
 });
 
+// Images fetched separately so the text-first response above isn't held up by them.
+router.get('/:slug/images', async (req, res) => {
+  const images = await getPortfolioProjectImagesBySlug(req.params.slug);
+  if (images === null) return res.status(404).json({ error: 'المشروع غير موجود.' });
+  res.json({ images });
+});
+
+// Cover image as a real fetchable URL (not a data: URI) — needed for og:image,
+// since link-preview crawlers (Meta, WhatsApp, etc.) can't fetch data: URIs.
+router.get('/:slug/cover', async (req, res) => {
+  const images = await getPortfolioProjectImagesBySlug(req.params.slug);
+  const cover = images?.[0];
+  if (!cover) return res.status(404).end();
+
+  const match = /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/.exec(cover);
+  if (!match) return res.status(404).end();
+
+  const [, mime, base64] = match;
+  res.set('Content-Type', mime);
+  res.set('Cache-Control', 'public, max-age=31536000, immutable'); // URL is content-hash-versioned by the caller
+  res.send(Buffer.from(base64, 'base64'));
+});
+
 // Staff: CRUD
 router.post('/', requireAdmin, async (req, res) => {
-  const { title, stack, description, problem, solution, images } = req.body || {};
+  const { title, stack, description, problem, solution, images, sourceLang: rawSourceLang } = req.body || {};
   if (!title?.trim()) {
     return res.status(400).json({ error: 'عنوان المشروع مطلوب.' });
   }
-  const project = await createPortfolioProject({
-    title: title.trim(),
-    stack: sanitizeStack(stack),
+  const sourceLang = VALID_LANGS.includes(rawSourceLang) ? rawSourceLang : 'ar';
+  const cleanText = {
     description: description?.trim() || '',
     problem: problem?.trim() || '',
     solution: solution?.trim() || '',
+  };
+  const otherTranslations = await translateProjectText(cleanText, sourceLang);
+
+  const project = await createPortfolioProject({
+    title: title.trim(),
+    stack: sanitizeStack(stack),
+    ...cleanText,
     images: sanitizeImages(images),
+    translations: { [sourceLang]: cleanText, ...otherTranslations },
+    sourceLang,
   });
   res.json({ project });
 });
@@ -74,7 +111,51 @@ router.put('/:id', requireAdmin, async (req, res) => {
   if (solution !== undefined) fields.solution = solution.trim();
   if (images !== undefined) fields.images = sanitizeImages(images);
 
+  // Diff against the existing row — only re-translate fields that actually changed,
+  // then merge into the existing translations rather than overwriting wholesale.
+  const changedText = {};
+  for (const field of ['description', 'problem', 'solution']) {
+    if (fields[field] !== undefined && fields[field] !== existing[field]) changedText[field] = fields[field];
+  }
+  if (Object.keys(changedText).length) {
+    const retranslated = await translateProjectText(changedText, existing.sourceLang);
+    const translations = { ...(existing.translations || {}) };
+    translations[existing.sourceLang] = { ...(translations[existing.sourceLang] || {}), ...changedText };
+    for (const [lang, langFields] of Object.entries(retranslated)) {
+      translations[lang] = { ...(translations[lang] || {}), ...langFields };
+    }
+    fields.translations = translations;
+  }
+
   const project = await updatePortfolioProject(req.params.id, fields);
+  res.json({ project });
+});
+
+// One-time backfill for legacy projects (created before auto-translation existed):
+// full re-translate of description/problem/solution. sourceLang may only be
+// corrected here while translations is still empty — once real translations
+// exist, changing sourceLang would orphan them, so the stored value is reused.
+router.post('/:id/translate', requireAdmin, async (req, res) => {
+  const existing = await getPortfolioProjectById(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'المشروع غير موجود.' });
+
+  const hasTranslations = Object.keys(existing.translations || {}).length > 0;
+  if (hasTranslations) {
+    return res.status(400).json({ error: 'هذا المشروع مترجم بالفعل.' });
+  }
+
+  const { sourceLang: rawSourceLang } = req.body || {};
+  const sourceLang = VALID_LANGS.includes(rawSourceLang) ? rawSourceLang : existing.sourceLang;
+
+  const fields = {
+    description: existing.description || '',
+    problem: existing.problem || '',
+    solution: existing.solution || '',
+  };
+  const retranslated = await translateProjectText(fields, sourceLang);
+  const translations = { [sourceLang]: fields, ...retranslated };
+
+  const project = await setPortfolioProjectTranslations(req.params.id, sourceLang, translations);
   res.json({ project });
 });
 

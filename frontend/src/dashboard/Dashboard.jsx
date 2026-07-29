@@ -5,7 +5,7 @@
 import { useState, useEffect, useCallback } from "react";
 import C from "../styles/colors";
 import { Card, Badge, Btn } from "../components/UI";
-import { t } from "../i18n";
+import { t, LANGUAGES } from "../i18n";
 import { api } from "../api";
 import { ORDER_STAGES, STAGE_SETS, REQUEST_KINDS } from "../data";
 
@@ -1474,14 +1474,22 @@ function KanbanTab({ lang, tasks, reload }) {
 
 // ── PORTFOLIO (public "our work" showcase — separate from client orders) ──────
 function PortfolioTab({ lang, portfolio, reload, user }) {
+  const f = t(lang, "dashboard.portfolioForm");
   const canManage = user?.role !== "developer";
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null); // full project being edited, or null for "new"
+  const [translatingId, setTranslatingId] = useState(null); // project currently showing the translate confirm row
+  const [translateLang, setTranslateLang] = useState(lang);
+  const [translateBusy, setTranslateBusy] = useState(false);
+  const [translateError, setTranslateError] = useState("");
 
   const openNew = () => { setEditing(null); setShowForm(true); };
   const openEdit = async (summary) => {
-    const data = await api(`/portfolio/${summary.slug}`);
-    setEditing(data.project);
+    const [metaData, imagesData] = await Promise.all([
+      api(`/portfolio/${summary.slug}`),
+      api(`/portfolio/${summary.slug}/images`),
+    ]);
+    setEditing({ ...metaData.project, images: imagesData.images });
     setShowForm(true);
   };
   const close = () => { setShowForm(false); setEditing(null); };
@@ -1490,6 +1498,25 @@ function PortfolioTab({ lang, portfolio, reload, user }) {
     if (!window.confirm(t(lang, "dashboard.portfolioForm.deleteConfirm"))) return;
     await api(`/portfolio/${p.id}`, { method: "DELETE" });
     await reload();
+  };
+
+  const startTranslate = (p) => {
+    setTranslatingId(p.id);
+    setTranslateLang(p.sourceLang || lang);
+    setTranslateError("");
+  };
+  const cancelTranslate = () => { setTranslatingId(null); setTranslateError(""); };
+  const confirmTranslate = async (p) => {
+    setTranslateBusy(true);
+    setTranslateError("");
+    try {
+      await api(`/portfolio/${p.id}/translate`, { method: "POST", body: { sourceLang: translateLang } });
+      setTranslatingId(null);
+      await reload();
+    } catch (err) {
+      setTranslateError(err.status ? err.message : t(lang, "auth.connectionError"));
+    }
+    setTranslateBusy(false);
   };
 
   return (
@@ -1520,9 +1547,29 @@ function PortfolioTab({ lang, portfolio, reload, user }) {
                 ))}
               </div>
               {canManage && (
-                <div style={{ display: "flex", gap: 6 }}>
+                <div style={{ display: "flex", gap: 6, marginBottom: translatingId === p.id ? 10 : 0 }}>
                   <MiniBtn onClick={() => openEdit(p)}>✏️</MiniBtn>
                   <MiniBtn onClick={() => remove(p)} danger>🗑️</MiniBtn>
+                  {Object.keys(p.translations || {}).length === 0 && (
+                    <MiniBtn onClick={() => startTranslate(p)}>🌐</MiniBtn>
+                  )}
+                </div>
+              )}
+              {canManage && translatingId === p.id && (
+                <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10, padding: 10 }}>
+                  <div style={{ fontSize: 12, color: C.muted, marginBottom: 8 }}>{f.translateHint}</div>
+                  <select value={translateLang} onChange={(e) => setTranslateLang(e.target.value)} style={{ ...inputStyle, marginBottom: 8 }}>
+                    {Object.entries(LANGUAGES).map(([code, label]) => (
+                      <option key={code} value={code}>{label}</option>
+                    ))}
+                  </select>
+                  {translateError && <div style={{ color: "#F87171", fontSize: 12, marginBottom: 8 }}>{translateError}</div>}
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <Btn onClick={() => confirmTranslate(p)} style={{ opacity: translateBusy ? 0.6 : 1, padding: "7px 14px", fontSize: 12 }}>
+                      {translateBusy ? "..." : f.translateConfirm}
+                    </Btn>
+                    <Btn variant="outline" onClick={cancelTranslate} style={{ padding: "7px 14px", fontSize: 12 }}>{f.cancel}</Btn>
+                  </div>
                 </div>
               )}
             </div>
@@ -1541,6 +1588,7 @@ function PortfolioForm({ lang, project, onSaved, onCancel }) {
   const [problem, setProblem] = useState(project?.problem || "");
   const [solution, setSolution] = useState(project?.solution || "");
   const [images, setImages] = useState(project?.images || []);
+  const [sourceLang, setSourceLang] = useState(lang);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -1569,6 +1617,7 @@ function PortfolioForm({ lang, project, onSaved, onCancel }) {
     setError("");
     const stack = stackText.split(",").map((s) => s.trim()).filter(Boolean);
     const body = { title: title.trim(), stack, description, problem, solution, images };
+    if (!project) body.sourceLang = sourceLang;
     try {
       if (project) await api(`/portfolio/${project.id}`, { method: "PUT", body });
       else await api("/portfolio", { method: "POST", body });
@@ -1587,6 +1636,17 @@ function PortfolioForm({ lang, project, onSaved, onCancel }) {
 
       <label style={{ fontSize: 13, color: C.muted, display: "block", marginBottom: 6 }}>{f.title}</label>
       <input value={title} onChange={(e) => setTitle(e.target.value)} style={{ ...inputStyle, marginBottom: 14 }} />
+
+      {!project && (
+        <>
+          <label style={{ fontSize: 13, color: C.muted, display: "block", marginBottom: 6 }}>{f.sourceLang}</label>
+          <select value={sourceLang} onChange={(e) => setSourceLang(e.target.value)} style={{ ...inputStyle, marginBottom: 14 }}>
+            {Object.entries(LANGUAGES).map(([code, label]) => (
+              <option key={code} value={code}>{label}</option>
+            ))}
+          </select>
+        </>
+      )}
 
       <label style={{ fontSize: 13, color: C.muted, display: "block", marginBottom: 6 }}>{f.stack}</label>
       <input value={stackText} onChange={(e) => setStackText(e.target.value)} placeholder={f.stackPlaceholder} style={{ ...inputStyle, marginBottom: 14 }} />

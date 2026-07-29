@@ -2,9 +2,10 @@
 
 import { useState, useEffect } from "react";
 import C from "../styles/colors";
-import { Card, Btn, SectionHeader } from "../components/UI";
+import { Card, Btn, SectionHeader, Spinner } from "../components/UI";
 import { t } from "../i18n";
 import { api } from "../api";
+import { pickText } from "../utils/projectText";
 
 export default function Projects({ go, lang, onSelectProject }) {
   const [projects, setProjects] = useState([]);
@@ -26,12 +27,20 @@ export default function Projects({ go, lang, onSelectProject }) {
         sub={t(lang, "projects.subtitle")}
       />
 
+      {loading && (
+        <div style={{ display: "flex", justifyContent: "center", padding: 48 }}>
+          <Spinner />
+        </div>
+      )}
+
       {!loading && projects.length === 0 && (
         <Card style={{ padding: 32, color: C.muted, fontSize: 14, textAlign: "center" }}>{t(lang, "projects.empty")}</Card>
       )}
 
       <div className="projects-grid">
-        {projects.map((project) => (
+        {!loading && projects.map((project) => {
+          const text = pickText(project, lang);
+          return (
           <Card
             key={project.slug}
             style={{ overflow: "hidden", cursor: "pointer" }}
@@ -47,9 +56,9 @@ export default function Projects({ go, lang, onSelectProject }) {
 
             <div style={{ padding: 24 }}>
               <div style={{ fontFamily: "Syne, sans-serif", fontWeight: 700, fontSize: 18, color: "#fff", marginBottom: 8 }}>{project.title}</div>
-              {project.description && (
+              {text.description && (
                 <div style={{ fontSize: 13, color: C.muted, lineHeight: 1.7, marginBottom: 16, display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
-                  {project.description}
+                  {text.description}
                 </div>
               )}
 
@@ -66,7 +75,8 @@ export default function Projects({ go, lang, onSelectProject }) {
               </Btn>
             </div>
           </Card>
-        ))}
+          );
+        })}
       </div>
 
       <div style={{ textAlign: "center", marginTop: 48 }}>
