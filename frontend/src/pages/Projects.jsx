@@ -5,6 +5,7 @@ import C from "../styles/colors";
 import { Card, Btn, SectionHeader, Spinner } from "../components/UI";
 import { t } from "../i18n";
 import { api } from "../api";
+import { API_BASE } from "../config";
 import { pickText } from "../utils/projectText";
 
 export default function Projects({ go, lang, onSelectProject }) {
@@ -48,10 +49,10 @@ export default function Projects({ go, lang, onSelectProject }) {
           >
             <div style={{
               height: 180,
-              background: project.cover ? `url(${project.cover}) center/cover` : `linear-gradient(135deg, ${C.accentDim}, ${C.surface})`,
+              background: project.hasCover ? `url(${API_BASE}/api/portfolio/${project.slug}/cover) center/cover` : `linear-gradient(135deg, ${C.accentDim}, ${C.surface})`,
               display: "flex", alignItems: "center", justifyContent: "center", fontSize: 56,
             }}>
-              {!project.cover && "🖼️"}
+              {!project.hasCover && "🖼️"}
             </div>
 
             <div style={{ padding: 24 }}>

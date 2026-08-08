@@ -8,6 +8,7 @@ import { Card, Btn, Spinner } from "../components/UI";
 import MarkdownLite from "../components/Markdown";
 import { t } from "../i18n";
 import { api } from "../api";
+import { API_BASE } from "../config";
 import { pickText } from "../utils/projectText";
 
 const AUTOPLAY_MS = 3500;
@@ -16,8 +17,6 @@ export default function ProjectDetails({ slug, go, lang }) {
   const [project, setProject] = useState(null);
   const [metaLoading, setMetaLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
-  const [images, setImages] = useState([]);
-  const [imagesLoading, setImagesLoading] = useState(true);
 
   useEffect(() => {
     setMetaLoading(true);
@@ -26,15 +25,6 @@ export default function ProjectDetails({ slug, go, lang }) {
       .then((data) => setProject(data.project))
       .catch(() => setNotFound(true))
       .finally(() => setMetaLoading(false));
-  }, [slug]);
-
-  useEffect(() => {
-    setImagesLoading(true);
-    setImages([]);
-    api(`/portfolio/${slug}/images`, { auth: false })
-      .then((data) => setImages(data.images || []))
-      .catch(() => setImages([]))
-      .finally(() => setImagesLoading(false));
   }, [slug]);
 
   const text = pickText(project, lang);
@@ -60,7 +50,7 @@ export default function ProjectDetails({ slug, go, lang }) {
 
       {!metaLoading && project && (
         <>
-          <Carousel images={images} loading={imagesLoading} />
+          <Carousel slug={slug} imageCount={project.imageCount || 0} />
 
           <h1 style={{ fontFamily: "Syne, sans-serif", fontWeight: 800, fontSize: "clamp(26px,3vw,38px)", color: "#fff", marginTop: 28, marginBottom: 14 }}>
             {project.title}
@@ -114,36 +104,59 @@ export default function ProjectDetails({ slug, go, lang }) {
   );
 }
 
-function Carousel({ images = [], loading = false }) {
+// Images are preloaded one at a time (serial loading) instead of all at once —
+// AI-generated portfolio images are large, so this gets the first slide on
+// screen fast instead of blocking on the whole set. Each URL is a real,
+// immutably-cacheable request (GET /portfolio/:slug/images/:index), not a
+// bundled base64 payload.
+function Carousel({ slug, imageCount = 0 }) {
   const [index, setIndex] = useState(0);
   const [paused, setPaused] = useState(false);
   const [lightbox, setLightbox] = useState(false);
+  const [loadedCount, setLoadedCount] = useState(0);
   const timerRef = useRef(null);
+
+  const images = Array.from({ length: imageCount }, (_, i) => `${API_BASE}/api/portfolio/${slug}/images/${i}`);
 
   useEffect(() => {
     setIndex(0);
-  }, [images]);
+    setLoadedCount(0);
+  }, [slug, imageCount]);
+
+  // Preload images[loadedCount] one at a time; each successful (or failed) load
+  // advances loadedCount, which re-runs this effect for the next index.
+  useEffect(() => {
+    if (loadedCount >= imageCount) return undefined;
+    let cancelled = false;
+    const img = new Image();
+    const advance = () => { if (!cancelled) setLoadedCount((n) => n + 1); };
+    img.onload = advance;
+    img.onerror = advance; // skip a broken image rather than stalling the whole sequence
+    img.src = images[loadedCount];
+    return () => { cancelled = true; };
+  }, [slug, imageCount, loadedCount]);
 
   useEffect(() => {
-    if (paused || images.length <= 1) return undefined;
+    if (paused || loadedCount <= 1) return undefined;
     timerRef.current = setInterval(() => {
-      setIndex((i) => (i + 1) % images.length);
+      setIndex((i) => (i + 1) % loadedCount);
     }, AUTOPLAY_MS);
     return () => clearInterval(timerRef.current);
-  }, [paused, images.length]);
+  }, [paused, loadedCount]);
 
-  if (images.length === 0) {
+  if (loadedCount === 0) {
     return (
       <div style={{
         height: 360, borderRadius: 18, background: `linear-gradient(135deg, ${C.accentDim}, ${C.surface})`,
         display: "flex", alignItems: "center", justifyContent: "center", fontSize: 64,
       }}>
-        {loading ? <Spinner /> : "🖼️"}
+        {imageCount > 0 ? <Spinner /> : "🖼️"}
       </div>
     );
   }
 
-  const go = (dir) => setIndex((i) => (i + dir + images.length) % images.length);
+  const loaded = images.slice(0, loadedCount);
+  const go = (dir) => setIndex((i) => (i + dir + loaded.length) % loaded.length);
 
   return (
     <div
@@ -152,7 +165,7 @@ function Carousel({ images = [], loading = false }) {
       onMouseLeave={() => setPaused(false)}
     >
       <div style={{ height: "clamp(220px, 55vw, 420px)", position: "relative", cursor: "zoom-in" }} onClick={() => setLightbox(true)}>
-        {images.map((src, i) => (
+        {loaded.map((src, i) => (
           <img
             key={i}
             src={src}
@@ -163,9 +176,14 @@ function Carousel({ images = [], loading = false }) {
             }}
           />
         ))}
+        {loadedCount < imageCount && (
+          <div style={{ position: "absolute", bottom: 14, insetInlineStart: 14, background: "rgba(10,10,15,.6)", border: `1px solid ${C.border}`, borderRadius: 20, padding: "4px 10px", fontSize: 11, color: C.muted }}>
+            {loadedCount + 1}/{imageCount}
+          </div>
+        )}
       </div>
 
-      {images.length > 1 && (
+      {loaded.length > 1 && (
         <>
           <button onClick={() => go(-1)} aria-label="Previous"
             style={{ position: "absolute", top: "50%", left: 14, transform: "translateY(-50%)", width: 38, height: 38, borderRadius: "50%", background: "rgba(10,10,15,.6)", border: `1px solid ${C.border}`, color: "#fff", fontSize: 16, cursor: "pointer" }}>
@@ -177,7 +195,7 @@ function Carousel({ images = [], loading = false }) {
           </button>
 
           <div style={{ position: "absolute", bottom: 14, left: "50%", transform: "translateX(-50%)", display: "flex", gap: 8 }}>
-            {images.map((_, i) => (
+            {loaded.map((_, i) => (
               <button
                 key={i}
                 onClick={() => setIndex(i)}
@@ -194,7 +212,7 @@ function Carousel({ images = [], loading = false }) {
       )}
 
       {lightbox && (
-        <Lightbox images={images} index={index} onNav={go} onClose={() => setLightbox(false)} />
+        <Lightbox images={loaded} index={index} onNav={go} onClose={() => setLightbox(false)} />
       )}
     </div>
   );

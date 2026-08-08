@@ -7,6 +7,7 @@ import C from "../styles/colors";
 import { Card, Badge, Btn } from "../components/UI";
 import { t, LANGUAGES } from "../i18n";
 import { api } from "../api";
+import { API_BASE } from "../config";
 import { ORDER_STAGES, STAGE_SETS, REQUEST_KINDS } from "../data";
 
 const SIDEBAR_ITEMS = [
@@ -1536,8 +1537,8 @@ function PortfolioTab({ lang, portfolio, reload, user }) {
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(240px,1fr))", gap: 18 }}>
         {portfolio.map((p) => (
           <Card key={p.id} style={{ overflow: "hidden" }}>
-            <div style={{ height: 130, background: p.cover ? `url(${p.cover}) center/cover` : C.bg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32 }}>
-              {!p.cover && "🖼️"}
+            <div style={{ height: 130, background: p.hasCover ? `url(${API_BASE}/api/portfolio/${p.slug}/cover) center/cover` : C.bg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32 }}>
+              {!p.hasCover && "🖼️"}
             </div>
             <div style={{ padding: 16 }}>
               <div style={{ fontFamily: "Syne, sans-serif", fontWeight: 700, fontSize: 15, color: "#fff", marginBottom: 6 }}>{p.title}</div>
