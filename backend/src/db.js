@@ -829,22 +829,25 @@ export async function getPortfolioProjectBySlug(slug) {
   return mapPortfolioProject(await get('SELECT * FROM portfolio_projects WHERE slug = $1', [slug]));
 }
 
-// Full project data minus images — used by the text-first detail route so the
-// response doesn't wait on (or ship) the base64 image payload.
+// Full project data minus images (but with an `imageCount`) — used by the
+// text-first detail route so the response doesn't wait on (or ship) the base64
+// image payload, while still telling the page how many images to preload.
 export async function getPortfolioProjectMetaBySlug(slug) {
   if (IS_MONGO) {
-    const doc = await PortfolioModel.findOne({ slug }).select('-images').lean();
+    const doc = await PortfolioModel.findOne({ slug }).lean();
     if (!doc) return null;
+    const imageCount = (doc.images || []).length;
     const { images, ...meta } = mapMongoPortfolio({ ...doc, images: [] });
-    return meta;
+    return { ...meta, imageCount };
   }
   const row = await get(
-    'SELECT id, title, slug, stack, description, problem, solution, translations, source_lang, created_at FROM portfolio_projects WHERE slug = $1',
+    'SELECT id, title, slug, stack, description, problem, solution, translations, source_lang, created_at, images FROM portfolio_projects WHERE slug = $1',
     [slug]
   );
   if (!row) return null;
+  const imageCount = JSON.parse(row.images || '[]').length;
   const { images, ...meta } = mapPortfolioProject({ ...row, images: '[]' });
-  return meta;
+  return { ...meta, imageCount };
 }
 
 // Just the images array — fetched separately so it can lazy-load after text.

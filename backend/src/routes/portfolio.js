@@ -28,19 +28,34 @@ function sanitizeImages(images) {
   return images.filter((s) => typeof s === 'string' && s.startsWith('data:image/')).slice(0, MAX_IMAGES);
 }
 
-// Public: list (without full image payloads — cover image only) & single project.
+// Decodes a stored `data:image/...;base64,...` string and writes it as a real
+// binary image response (immutably cacheable) — shared by /cover and /images/:index
+// below so individual images can be fetched one at a time instead of bundled.
+function sendImage(res, dataUri) {
+  if (!dataUri) return res.status(404).end();
+  const match = /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/.exec(dataUri);
+  if (!match) return res.status(404).end();
+
+  const [, mime, base64] = match;
+  res.set('Content-Type', mime);
+  res.set('Cache-Control', 'public, max-age=31536000, immutable'); // URL is content-hash-versioned by the caller
+  res.send(Buffer.from(base64, 'base64'));
+}
+
+// Public: list (without full image payloads — just whether a cover exists,
+// fetched separately as a real cacheable URL via GET /:slug/cover) & single project.
 router.get('/', async (_req, res) => {
   const projects = await listPortfolioProjects();
   res.json({
     projects: projects.map((p) => ({
       id: p.id, title: p.title, slug: p.slug, stack: p.stack,
-      description: p.description, cover: p.images[0] || null, createdAt: p.createdAt,
+      description: p.description, hasCover: p.images.length > 0, createdAt: p.createdAt,
       translations: p.translations, sourceLang: p.sourceLang,
     })),
   });
 });
 
-// Text-first detail: no images payload — see GET /:slug/images below.
+// Text-first detail: no images payload — see GET /:slug/images(/:index) below.
 router.get('/:slug', async (req, res) => {
   const project = await getPortfolioProjectMetaBySlug(req.params.slug);
   if (!project) return res.status(404).json({ error: 'المشروع غير موجود.' });
@@ -48,26 +63,31 @@ router.get('/:slug', async (req, res) => {
 });
 
 // Images fetched separately so the text-first response above isn't held up by them.
+// Used by the admin edit form, which needs the full base64 array to preview/reorder
+// and resubmit on save. The public site loads images one at a time — see below.
 router.get('/:slug/images', async (req, res) => {
   const images = await getPortfolioProjectImagesBySlug(req.params.slug);
   if (images === null) return res.status(404).json({ error: 'المشروع غير موجود.' });
   res.json({ images });
 });
 
+// A single image as a real fetchable URL (not a data: URI) — lets the public
+// site preload images one at a time (serial loading) instead of waiting on the
+// whole project's image batch, and lets the browser actually cache each image.
+router.get('/:slug/images/:index', async (req, res) => {
+  const images = await getPortfolioProjectImagesBySlug(req.params.slug);
+  if (images === null) return res.status(404).end();
+  const index = Number(req.params.index);
+  if (!Number.isInteger(index) || index < 0 || index >= images.length) return res.status(404).end();
+  sendImage(res, images[index]);
+});
+
 // Cover image as a real fetchable URL (not a data: URI) — needed for og:image,
 // since link-preview crawlers (Meta, WhatsApp, etc.) can't fetch data: URIs.
+// Also used as the thumbnail source on the Projects list and admin grid.
 router.get('/:slug/cover', async (req, res) => {
   const images = await getPortfolioProjectImagesBySlug(req.params.slug);
-  const cover = images?.[0];
-  if (!cover) return res.status(404).end();
-
-  const match = /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/.exec(cover);
-  if (!match) return res.status(404).end();
-
-  const [, mime, base64] = match;
-  res.set('Content-Type', mime);
-  res.set('Cache-Control', 'public, max-age=31536000, immutable'); // URL is content-hash-versioned by the caller
-  res.send(Buffer.from(base64, 'base64'));
+  sendImage(res, images?.[0]);
 });
 
 // Staff: CRUD
