@@ -6,10 +6,12 @@ import { t } from "../i18n";
 const LINKS = [
   { icon: "📞", href: "tel:+213781612093", label: "+213 781 612 093" },
   { icon: "💬", href: "https://wa.me/213781612093", label: "WhatsApp — +213 781 612 093" },
-  { icon: "💬", href: "https://wa.me/213552111855", label: "WhatsApp — +213 552 111 855" },
+  { icon: "💬", href: "https://wa.me/213552111855", label: "WhatsApp — +213 672 598 713" },
   { icon: "✉️", href: "mailto:abbasissam98@gmail.com", label: "abbasissam98@gmail.com" },
+  { icon: "✉️", href: "mailto:aniskhalainouanis@gmail.com", label: "aniskhalainouanis@gmail.com" },
   { icon: "📘", href: "https://www.facebook.com/issam.ab.79393", label: "Facebook" },
   { icon: "📸", href: "https://instagram.com/abbasissam98", label: "Instagram" },
+  { icon: "📸", href: "https://www.instagram.com/anis_khalainou?stkn=cHVzNWFpMDZxYm5q", label: "Instagram — Anis Khalainou" }
 ];
 
 export default function Footer({ lang }) {
