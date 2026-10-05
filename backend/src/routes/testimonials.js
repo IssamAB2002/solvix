@@ -4,7 +4,7 @@
 // panel; only approved testimonials are shown on the Home page.
 
 import express from 'express';
-import { requireStaff, requireAdmin } from './auth.js';
+import { requireAdmin } from './auth.js';
 import {
   createTestimonial, listTestimonials, listApprovedTestimonials,
   getTestimonialById, updateTestimonialStatus, deleteTestimonialById,
@@ -30,10 +30,11 @@ router.post('/', async (req, res) => {
   res.json({ message: 'شكراً لك! سيتم مراجعة تقييمك قريباً.', testimonial });
 });
 
-// Public: approved testimonials only. Staff: everything (any status).
+// Public: approved testimonials only. Admin/CEO: everything (any status) —
+// Partners & Developers don't get a Testimonials tab (partnership feature scoping).
 router.get('/', async (req, res) => {
   if (req.query.all === '1') {
-    return requireStaff(req, res, async () => {
+    return requireAdmin(req, res, async () => {
       res.json({ testimonials: await listTestimonials() });
     });
   }

@@ -18,7 +18,7 @@ const IS_PG = DB_TYPE === 'postgres';
 
 let pgPool;
 let sqliteDb;
-let UserModel, OrderModel, RequestModel, TaskModel, PortfolioModel, TestimonialModel;
+let UserModel, OrderModel, RequestModel, TaskModel, PortfolioModel, TestimonialModel, InvoiceModel;
 
 // ── Mongoose schemas ──────────────────────────────────────────────────────────
 const userSchema = new mongoose.Schema(
@@ -50,6 +50,10 @@ const orderSchema = new mongoose.Schema(
     features: [{ name: String, price: Number, done: { type: Boolean, default: false } }],
     payments: [{ amount: Number, note: String, createdBy: { type: String, default: '' }, createdAt: { type: Date, default: Date.now } }],
     createdBy: { type: String, default: '' },
+    partnerId: { type: String, default: null },
+    partnerPct: { type: Number, default: null },
+    developerId: { type: String, default: null },
+    developerPct: { type: Number, default: null },
     createdAt: { type: Date, default: Date.now },
   },
   { collection: 'orders' }
@@ -116,6 +120,23 @@ const testimonialSchema = new mongoose.Schema(
   { collection: 'testimonials' }
 );
 
+// General ledger backing the Invoices tab: salary payouts to Partners/Developers,
+// order payments, and general company incomes/expenses.
+const invoiceSchema = new mongoose.Schema(
+  {
+    category: { type: String, required: true }, // 'salary' | 'payment' | 'income' | 'expense'
+    orderId: { type: String, default: null },
+    paymentId: { type: String, default: null }, // links a 'payment'-category invoice back to its payments row (SQL only)
+    userId: { type: String, default: null }, // partner/developer being paid out (category='salary')
+    amount: { type: Number, required: true },
+    currency: { type: String, default: 'dzd' },
+    note: { type: String, default: '' },
+    createdBy: { type: String, default: '' },
+    createdAt: { type: Date, default: Date.now },
+  },
+  { collection: 'invoices' }
+);
+
 // ── SQL helpers (shared between SQLite & PostgreSQL) ─────────────────────────
 // Queries are written with $1..$n placeholders (ascending order of appearance);
 // they are converted to '?' for SQLite.
@@ -179,6 +200,10 @@ function mapOrder(row) {
     totalBudget: row.total_budget,
     amountPaid: row.amount_paid ?? 0,
     createdBy: row.created_by || '',
+    partnerId: row.partner_id ?? null,
+    partnerPct: row.partner_pct ?? null,
+    developerId: row.developer_id ?? null,
+    developerPct: row.developer_pct ?? null,
     createdAt: row.created_at,
   };
 }
@@ -199,6 +224,45 @@ function mapMongoOrder(doc) {
     progressPct: doc.progressPct,
     totalBudget: doc.totalBudget,
     amountPaid,
+    createdBy: doc.createdBy || '',
+    partnerId: doc.partnerId ?? null,
+    partnerPct: doc.partnerPct ?? null,
+    developerId: doc.developerId ?? null,
+    developerPct: doc.developerPct ?? null,
+    createdAt: doc.createdAt,
+  };
+}
+
+function mapInvoice(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    category: row.category,
+    orderId: row.order_id ?? null,
+    orderUid: row.order_uid ?? undefined,
+    clientName: row.client_name ?? undefined,
+    paymentId: row.payment_id ?? null,
+    userId: row.user_id ?? null,
+    userName: row.user_name ?? undefined,
+    amount: row.amount,
+    currency: row.currency || 'dzd',
+    note: row.note || '',
+    createdBy: row.created_by || '',
+    createdAt: row.created_at,
+  };
+}
+
+function mapMongoInvoice(doc) {
+  if (!doc) return null;
+  return {
+    id: doc._id.toString(),
+    category: doc.category,
+    orderId: doc.orderId || null,
+    paymentId: doc.paymentId || null,
+    userId: doc.userId || null,
+    amount: doc.amount,
+    currency: doc.currency || 'dzd',
+    note: doc.note || '',
     createdBy: doc.createdBy || '',
     createdAt: doc.createdAt,
   };
@@ -234,6 +298,10 @@ export async function initDb() {
         progress_pct INTEGER NOT NULL DEFAULT 0,
         total_budget REAL NOT NULL DEFAULT 0,
         created_by TEXT DEFAULT '',
+        partner_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        partner_pct REAL,
+        developer_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        developer_pct REAL,
         created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
       );
       CREATE INDEX IF NOT EXISTS idx_orders_key ON orders (private_key_hash);
@@ -297,6 +365,18 @@ export async function initDb() {
         status TEXT NOT NULL DEFAULT 'pending',
         created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
       );
+      CREATE TABLE IF NOT EXISTS invoices (
+        id SERIAL PRIMARY KEY,
+        category TEXT NOT NULL,
+        order_id INTEGER REFERENCES orders(id) ON DELETE CASCADE,
+        payment_id INTEGER REFERENCES payments(id) ON DELETE CASCADE,
+        user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        amount REAL NOT NULL,
+        currency TEXT NOT NULL DEFAULT 'dzd',
+        note TEXT DEFAULT '',
+        created_by TEXT DEFAULT '',
+        created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+      );
     `);
   } else if (IS_MONGO) {
     if (!MONGODB_URI) throw new Error('MONGODB_URI is required for MongoDB.');
@@ -307,6 +387,7 @@ export async function initDb() {
     TaskModel = mongoose.models.Task || mongoose.model('Task', taskSchema);
     PortfolioModel = mongoose.models.PortfolioProject || mongoose.model('PortfolioProject', portfolioSchema);
     TestimonialModel = mongoose.models.Testimonial || mongoose.model('Testimonial', testimonialSchema);
+    InvoiceModel = mongoose.models.Invoice || mongoose.model('Invoice', invoiceSchema);
   } else {
     sqliteDb = await open({ filename: SQLITE_FILE, driver: sqlite3.Database });
     await sqliteDb.exec('PRAGMA foreign_keys = ON;');
@@ -335,6 +416,10 @@ export async function initDb() {
         progress_pct INTEGER NOT NULL DEFAULT 0,
         total_budget REAL NOT NULL DEFAULT 0,
         created_by TEXT DEFAULT '',
+        partner_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        partner_pct REAL,
+        developer_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        developer_pct REAL,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
       CREATE INDEX IF NOT EXISTS idx_orders_key ON orders (private_key_hash);
@@ -396,6 +481,18 @@ export async function initDb() {
         rating INTEGER NOT NULL DEFAULT 5,
         text TEXT NOT NULL,
         status TEXT NOT NULL DEFAULT 'pending',
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE TABLE IF NOT EXISTS invoices (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        category TEXT NOT NULL,
+        order_id INTEGER REFERENCES orders(id) ON DELETE CASCADE,
+        payment_id INTEGER REFERENCES payments(id) ON DELETE CASCADE,
+        user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        amount REAL NOT NULL,
+        currency TEXT NOT NULL DEFAULT 'dzd',
+        note TEXT DEFAULT '',
+        created_by TEXT DEFAULT '',
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
     `);
@@ -428,6 +525,11 @@ async function migrate() {
     await pgPool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT DEFAULT ''`);
     await pgPool.query(`ALTER TABLE portfolio_projects ADD COLUMN IF NOT EXISTS translations TEXT DEFAULT '{}'`);
     await pgPool.query(`ALTER TABLE portfolio_projects ADD COLUMN IF NOT EXISTS source_lang TEXT NOT NULL DEFAULT 'ar'`);
+    await pgPool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS partner_id INTEGER REFERENCES users(id) ON DELETE SET NULL`);
+    await pgPool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS partner_pct REAL`);
+    await pgPool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS developer_id INTEGER REFERENCES users(id) ON DELETE SET NULL`);
+    await pgPool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS developer_pct REAL`);
+    await pgPool.query(`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS payment_id INTEGER REFERENCES payments(id) ON DELETE CASCADE`);
   } else {
     try {
       await sqliteDb.exec(`ALTER TABLE requests ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'`);
@@ -462,8 +564,44 @@ async function migrate() {
     try {
       await sqliteDb.exec(`ALTER TABLE portfolio_projects ADD COLUMN source_lang TEXT NOT NULL DEFAULT 'ar'`);
     } catch { /* column already exists */ }
+    try {
+      await sqliteDb.exec(`ALTER TABLE orders ADD COLUMN partner_id INTEGER REFERENCES users(id) ON DELETE SET NULL`);
+    } catch { /* column already exists */ }
+    try {
+      await sqliteDb.exec(`ALTER TABLE orders ADD COLUMN partner_pct REAL`);
+    } catch { /* column already exists */ }
+    try {
+      await sqliteDb.exec(`ALTER TABLE orders ADD COLUMN developer_id INTEGER REFERENCES users(id) ON DELETE SET NULL`);
+    } catch { /* column already exists */ }
+    try {
+      await sqliteDb.exec(`ALTER TABLE orders ADD COLUMN developer_pct REAL`);
+    } catch { /* column already exists */ }
+    try {
+      await sqliteDb.exec(`ALTER TABLE invoices ADD COLUMN payment_id INTEGER REFERENCES payments(id) ON DELETE CASCADE`);
+    } catch { /* column already exists */ }
   }
   await run(`UPDATE orders SET status = 'deployment' WHERE status = 'delivery'`);
+  await backfillPaymentInvoices();
+}
+
+// One-time backfill: any payment recorded before the Invoices ledger existed
+// (or before a payment→invoice mirror existed) gets a matching 'payment'-category
+// invoice row, preserving its original date — so the Invoices tab (and its
+// delete button) covers every historical payment, not just new ones. Idempotent:
+// skips payments that already have a linked invoice.
+async function backfillPaymentInvoices() {
+  if (IS_MONGO) return; // embedded Mongo payments have no stable id to link against
+  const missing = await all(`
+    SELECT p.* FROM payments p
+    WHERE NOT EXISTS (SELECT 1 FROM invoices i WHERE i.payment_id = p.id)
+  `, []);
+  for (const p of missing) {
+    await run(
+      `INSERT INTO invoices (category, order_id, payment_id, amount, currency, note, created_by, created_at)
+       VALUES ('payment', $1, $2, $3, 'dzd', $4, $5, $6)`,
+      [p.order_id, p.id, p.amount, p.note || '', p.created_by || '', p.created_at]
+    );
+  }
 }
 
 async function seedAdmin() {
@@ -519,11 +657,17 @@ export async function updateUserPassword(id, hashedPassword, mustChangePassword)
 
 export async function listStaff() {
   if (IS_MONGO) {
-    const docs = await UserModel.find({ role: { $in: ['ceo', 'admin', 'developer'] } }).lean();
+    const docs = await UserModel.find({ role: { $in: ['ceo', 'admin', 'developer', 'partner'] } }).lean();
     return docs.map((d) => ({ id: d._id.toString(), name: d.name, email: d.email, phone: d.phone || '', role: d.role, mustChangePassword: !!d.mustChangePassword }));
   }
-  const rows = await all("SELECT id, name, email, phone, role, must_change_password FROM users WHERE role IN ('ceo','admin','developer') ORDER BY id", []);
+  const rows = await all("SELECT id, name, email, phone, role, must_change_password FROM users WHERE role IN ('ceo','admin','developer','partner') ORDER BY id", []);
   return rows.map((r) => ({ id: r.id, name: r.name, email: r.email, phone: r.phone || '', role: r.role, mustChangePassword: !!r.must_change_password }));
+}
+
+// Partners & developers only — used to populate assignment dropdowns.
+export async function listAssignableStaff() {
+  const staff = await listStaff();
+  return staff.filter((s) => s.role === 'partner' || s.role === 'developer');
 }
 
 export async function deleteUserById(id) {
@@ -538,20 +682,27 @@ const ORDER_PAID_SELECT = `
   FROM orders o`;
 
 export async function createOrder(data) {
-  const { uid, privateKeyHash, clientName, clientPhone = '', clientEmail = '', projectType = '', description = '', kind = 'new', totalBudget = 0, features = [], createdBy = '' } = data;
+  const {
+    uid, privateKeyHash, clientName, clientPhone = '', clientEmail = '', projectType = '', description = '', kind = 'new',
+    totalBudget = 0, features = [], createdBy = '',
+    partnerId = null, partnerPct = null, developerId = null, developerPct = null,
+  } = data;
 
   if (IS_MONGO) {
     const saved = await new OrderModel({
       uid, privateKeyHash, clientName, clientPhone, clientEmail, projectType, description, kind,
       totalBudget, features: features.map((f) => ({ name: f.name, price: Number(f.price) || 0 })), createdBy,
+      partnerId: partnerId || null, partnerPct: partnerId ? partnerPct : null,
+      developerId: developerId || null, developerPct: developerId ? developerPct : null,
     }).save();
     return mapMongoOrder(saved.toObject());
   }
 
   const id = await insert(
-    `INSERT INTO orders (uid, private_key_hash, client_name, client_phone, client_email, project_type, description, kind, total_budget, created_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-    [uid, privateKeyHash, clientName, clientPhone, clientEmail, projectType, description, kind, totalBudget, createdBy]
+    `INSERT INTO orders (uid, private_key_hash, client_name, client_phone, client_email, project_type, description, kind, total_budget, created_by, partner_id, partner_pct, developer_id, developer_pct)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+    [uid, privateKeyHash, clientName, clientPhone, clientEmail, projectType, description, kind, totalBudget, createdBy,
+      partnerId || null, partnerId ? partnerPct : null, developerId || null, developerId ? developerPct : null]
   );
   for (const f of features) {
     await run('INSERT INTO order_features (order_id, name, price) VALUES ($1, $2, $3)', [id, f.name, Number(f.price) || 0]);
@@ -612,6 +763,10 @@ const ORDER_UPDATABLE = {
   status: 'status',
   progressPct: 'progress_pct',
   totalBudget: 'total_budget',
+  partnerId: 'partner_id',
+  partnerPct: 'partner_pct',
+  developerId: 'developer_id',
+  developerPct: 'developer_pct',
 };
 
 export async function updateOrder(id, fields) {
@@ -670,11 +825,18 @@ export async function countOrders() {
 // ── Payments ──────────────────────────────────────────────────────────────────
 export async function addPayment(orderId, { amount, note = '', createdBy = '' }) {
   if (IS_MONGO) {
+    // Mongo payments are embedded subdocuments — no standalone id to link an
+    // invoice ledger row back to, so the mirrored invoice stays unlinked (paymentId: null).
     await OrderModel.updateOne({ _id: orderId }, { $push: { payments: { amount, note, createdBy } } });
-    return getOrderById(orderId);
+    return { order: await getOrderById(orderId), paymentId: null };
   }
-  await run('INSERT INTO payments (order_id, amount, note, created_by) VALUES ($1, $2, $3, $4)', [orderId, amount, note, createdBy]);
-  return getOrderById(orderId);
+  const paymentId = await insert('INSERT INTO payments (order_id, amount, note, created_by) VALUES ($1, $2, $3, $4)', [orderId, amount, note, createdBy]);
+  return { order: await getOrderById(orderId), paymentId };
+}
+
+export async function deletePaymentById(id) {
+  if (IS_MONGO) return; // not supported for embedded Mongo payments
+  await run('DELETE FROM payments WHERE id = $1', [id]);
 }
 
 export async function listPayments() {
@@ -695,6 +857,49 @@ export async function listPayments() {
     id: r.id, orderId: r.order_id, orderUid: r.uid, clientName: r.client_name,
     projectType: r.project_type, amount: r.amount, note: r.note, createdBy: r.created_by || '', createdAt: r.created_at,
   }));
+}
+
+// ── Invoices (salaries/commission payouts, project payments, incomes & expenses) ──
+export async function createInvoice({ category, orderId = null, paymentId = null, userId = null, amount, currency = 'dzd', note = '', createdBy = '' }) {
+  if (IS_MONGO) {
+    const saved = await new InvoiceModel({ category, orderId, paymentId, userId, amount, currency, note, createdBy }).save();
+    return mapMongoInvoice(saved.toObject());
+  }
+  const id = await insert(
+    'INSERT INTO invoices (category, order_id, payment_id, user_id, amount, currency, note, created_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
+    [category, orderId, paymentId, userId, amount, currency, note, createdBy]
+  );
+  return getInvoiceById(id);
+}
+
+export async function getInvoiceById(id) {
+  if (IS_MONGO) return mapMongoInvoice(await InvoiceModel.findById(id).lean());
+  const row = await get(
+    `SELECT i.*, o.uid AS order_uid, o.client_name, u.name AS user_name
+     FROM invoices i
+     LEFT JOIN orders o ON o.id = i.order_id
+     LEFT JOIN users u ON u.id = i.user_id
+     WHERE i.id = $1`, [id]);
+  return mapInvoice(row);
+}
+
+export async function listInvoices() {
+  if (IS_MONGO) {
+    const docs = await InvoiceModel.find().sort({ createdAt: -1 }).lean();
+    return docs.map(mapMongoInvoice);
+  }
+  const rows = await all(
+    `SELECT i.*, o.uid AS order_uid, o.client_name, u.name AS user_name
+     FROM invoices i
+     LEFT JOIN orders o ON o.id = i.order_id
+     LEFT JOIN users u ON u.id = i.user_id
+     ORDER BY i.created_at DESC, i.id DESC`, []);
+  return rows.map(mapInvoice);
+}
+
+export async function deleteInvoiceById(id) {
+  if (IS_MONGO) return void (await InvoiceModel.deleteOne({ _id: id }));
+  await run('DELETE FROM invoices WHERE id = $1', [id]);
 }
 
 // ── Requests (leads from the public form) ─────────────────────────────────────

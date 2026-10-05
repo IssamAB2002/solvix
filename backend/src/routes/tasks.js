@@ -1,7 +1,7 @@
 // ─── KANBAN TASKS (staff) ────────────────────────────────────────────────────
 
 import express from 'express';
-import { requireStaff } from './auth.js';
+import { requireAdmin } from './auth.js';
 import { listTasks, createTask, updateTask, deleteTask } from '../db.js';
 
 const router = express.Router();
@@ -9,11 +9,13 @@ const router = express.Router();
 const LANES = ['todo', 'doing', 'done'];
 const PRIORITIES = ['low', 'mid', 'high'];
 
-router.get('/', requireStaff, async (_req, res) => {
+// Admin/CEO only — Partners & Developers don't get a Kanban view in the
+// Direction panel (partnership feature scoping).
+router.get('/', requireAdmin, async (_req, res) => {
   res.json({ tasks: await listTasks() });
 });
 
-router.post('/', requireStaff, async (req, res) => {
+router.post('/', requireAdmin, async (req, res) => {
   const { title, client, priority = 'mid', lane = 'todo' } = req.body;
   if (!title?.trim()) return res.status(400).json({ error: 'عنوان المهمة مطلوب.' });
   if (!LANES.includes(lane) || !PRIORITIES.includes(priority)) {
@@ -23,7 +25,7 @@ router.post('/', requireStaff, async (req, res) => {
   res.json({ task });
 });
 
-router.put('/:id', requireStaff, async (req, res) => {
+router.put('/:id', requireAdmin, async (req, res) => {
   const { title, client, priority, lane } = req.body;
   if (lane !== undefined && !LANES.includes(lane)) {
     return res.status(400).json({ error: 'قيمة غير صالحة.' });
@@ -36,7 +38,7 @@ router.put('/:id', requireStaff, async (req, res) => {
   res.json({ task });
 });
 
-router.delete('/:id', requireStaff, async (req, res) => {
+router.delete('/:id', requireAdmin, async (req, res) => {
   await deleteTask(req.params.id);
   res.json({ message: 'تم حذف المهمة.' });
 });

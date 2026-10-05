@@ -82,7 +82,7 @@ router.post('/:id/approve', requireAdmin, async (req, res) => {
     return res.status(400).json({ error: 'هذا الطلب مقبول بالفعل.' });
   }
 
-  const { projectType, description, totalBudget, kind } = req.body || {};
+  const { projectType, description, totalBudget, kind, partnerId, partnerPct, developerId, developerPct } = req.body || {};
   const fallbackDescription = [
     request.goal && `Goal: ${request.goal}`,
     request.budget && `Budget: ${request.budget}`,
@@ -103,6 +103,10 @@ router.post('/:id/approve', requireAdmin, async (req, res) => {
     totalBudget: Number(totalBudget) || 0,
     features: [],
     createdBy: req.user.name,
+    partnerId: partnerId || null,
+    partnerPct: partnerId ? (Number(partnerPct) || 0) : null,
+    developerId: developerId || null,
+    developerPct: developerId ? (Number(developerPct) || 0) : null,
   });
   await deleteRequestById(request.id);
 

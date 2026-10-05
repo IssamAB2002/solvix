@@ -9,7 +9,7 @@ import { requireStaff, requireAdmin } from './auth.js';
 import {
   createOrder, listOrders, getOrderById, getOrderByUid, findOrderIdByKeyHash,
   updateOrder, updateOrderKeyHash, replaceOrderFeatures, deleteOrder, countOrders,
-  addPayment, listPayments,
+  addPayment, listPayments, createInvoice,
 } from '../db.js';
 
 const router = express.Router();
@@ -45,14 +45,26 @@ export async function generateUid() {
   return `SLVX-${year}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
 }
 
+// Partners & developers only see orders they're attributed to; admin/ceo see all.
+function isOwnOrder(order, user) {
+  return String(order.partnerId) === String(user.id) || String(order.developerId) === String(user.id);
+}
+
 // ── Staff: orders CRUD ────────────────────────────────────────────────────────
-router.get('/orders', requireStaff, async (_req, res) => {
-  res.json({ orders: await listOrders() });
+router.get('/orders', requireStaff, async (req, res) => {
+  const orders = await listOrders();
+  if (req.user.role === 'partner' || req.user.role === 'developer') {
+    return res.json({ orders: orders.filter((o) => isOwnOrder(o, req.user)) });
+  }
+  res.json({ orders });
 });
 
 router.get('/orders/:id', requireStaff, async (req, res) => {
   const order = await getOrderById(req.params.id);
   if (!order) return res.status(404).json({ error: 'الطلب غير موجود.' });
+  if ((req.user.role === 'partner' || req.user.role === 'developer') && !isOwnOrder(order, req.user)) {
+    return res.status(403).json({ error: 'لا يمكنك الوصول إلى هذا المشروع.' });
+  }
   res.json({ order });
 });
 
@@ -88,17 +100,26 @@ router.put('/orders/:id', requireStaff, async (req, res) => {
   const existing = await getOrderById(req.params.id);
   if (!existing) return res.status(404).json({ error: 'الطلب غير موجود.' });
 
-  // Developers only move the build through its stages — everything else
-  // (client info, budget, features…) requires admin/ceo.
+  // Partners are read-only everywhere in the Direction panel.
+  if (req.user.role === 'partner') {
+    return res.status(403).json({ error: 'لا يمكن لشريك تعديل المشروع.' });
+  }
+
+  // Developers only move the build through its stages, manage features/budget
+  // on their own project — everything else (client info, payments, partner/dev
+  // assignment…) requires admin/ceo.
   if (req.user.role === 'developer') {
-    const allowedKeys = ['status', 'progressPct'];
+    if (!isOwnOrder(existing, req.user)) {
+      return res.status(403).json({ error: 'لا يمكنك تعديل هذا المشروع.' });
+    }
+    const allowedKeys = ['status', 'progressPct', 'features', 'totalBudget'];
     const extraKeys = Object.keys(req.body).filter((k) => !allowedKeys.includes(k));
     if (extraKeys.length) {
-      return res.status(403).json({ error: 'يمكنك فقط تحديث حالة ونسبة تقدم المشروع.' });
+      return res.status(403).json({ error: 'يمكنك فقط تحديث حالة المشروع، نسبة التقدم، والمزايا والميزانية.' });
     }
   }
 
-  const { status, progressPct, features, ...rest } = req.body;
+  const { status, progressPct, features, partnerId, partnerPct, developerId, developerPct, ...rest } = req.body;
   const fields = { ...rest };
 
   if (status !== undefined) {
@@ -115,6 +136,16 @@ router.put('/orders/:id', requireStaff, async (req, res) => {
     fields.progressPct = Math.round(pct);
   }
   if (fields.totalBudget !== undefined) fields.totalBudget = Number(fields.totalBudget) || 0;
+
+  // Partner/Developer assignment (with their %) — admin/ceo only.
+  if (partnerId !== undefined) {
+    fields.partnerId = partnerId || null;
+    fields.partnerPct = partnerId ? (Number(partnerPct) || 0) : null;
+  }
+  if (developerId !== undefined) {
+    fields.developerId = developerId || null;
+    fields.developerPct = developerId ? (Number(developerPct) || 0) : null;
+  }
 
   if (features !== undefined) {
     await replaceOrderFeatures(req.params.id, sanitizeFeatures(features));
@@ -153,7 +184,12 @@ router.post('/orders/:id/payments', requireAdmin, async (req, res) => {
   if (!amount || amount <= 0) {
     return res.status(400).json({ error: 'المبلغ يجب أن يكون أكبر من صفر.' });
   }
-  const order = await addPayment(req.params.id, { amount, note: req.body.note?.trim() || '', createdBy: req.user.name });
+  const note = req.body.note?.trim() || '';
+  const { order, paymentId } = await addPayment(req.params.id, { amount, note, createdBy: req.user.name });
+  // Mirrored into the Invoices ledger (category: "payment") so it shows up
+  // alongside salaries/incomes/expenses without maintaining two sources of truth.
+  // Linked via paymentId so deleting the invoice also removes the underlying payment.
+  await createInvoice({ category: 'payment', orderId: req.params.id, paymentId, amount, note, createdBy: req.user.name });
   res.json({ order });
 });
 

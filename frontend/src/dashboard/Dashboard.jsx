@@ -17,9 +17,9 @@ const SIDEBAR_ITEMS = [
   { id: "clients",  icon: "👥" },
   { id: "invoices", icon: "🧾" },
   { id: "revenue",  icon: "💰" },
-  { id: "kanban",   icon: "📋" },
-  { id: "portfolio", icon: "🖼️" },
-  { id: "testimonials", icon: "🌟" },
+  { id: "kanban",   icon: "📋", hiddenForPartnerDev: true },
+  { id: "portfolio", icon: "🖼️", hiddenForPartnerDev: true },
+  { id: "testimonials", icon: "🌟", hiddenForPartnerDev: true },
   { id: "messages", icon: "💬" },
   { id: "team", icon: "👤", ceoOnly: true },
 ];
@@ -56,21 +56,33 @@ export default function Dashboard({ user, lang, setLang, onLogout }) {
   const [tasks, setTasks] = useState([]);
   const [portfolio, setPortfolio] = useState([]);
   const [testimonials, setTestimonials] = useState([]);
+  const [invoices, setInvoices] = useState([]);
+  const [assignableStaff, setAssignableStaff] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [changingPassword, setChangingPassword] = useState(false);
 
+  const isAdmin = user?.role === "ceo" || user?.role === "admin";
+  const isPartnerOrDev = user?.role === "partner" || user?.role === "developer";
+
   const reload = useCallback(async () => {
     try {
-      const [o, r, p, k, pf, tm] = await Promise.all([
-        api("/orders"), api("/requests"), api("/payments"), api("/tasks"), api("/portfolio"), api("/testimonials?all=1"),
+      // Kanban & Testimonials (admin listing) are Admin/CEO-only — Partners &
+      // Developers don't get those tabs, so skip the calls entirely for them.
+      const [o, r, p, pf, inv] = await Promise.all([
+        api("/orders"), api("/requests"), api("/payments"), api("/portfolio"), api("/invoices"),
       ]);
       setOrders(o.orders);
       setRequests(r.requests);
       setPayments(p.payments);
-      setTasks(k.tasks);
       setPortfolio(pf.projects);
-      setTestimonials(tm.testimonials);
+      setInvoices(inv.invoices);
+      if (isAdmin) {
+        const [k, tm, st] = await Promise.all([api("/tasks"), api("/testimonials?all=1"), api("/auth/staff/assignable")]);
+        setTasks(k.tasks);
+        setTestimonials(tm.testimonials);
+        setAssignableStaff(st.staff);
+      }
       setLoadError("");
     } catch (err) {
       if (err.status === 401 || err.status === 403) return onLogout();
@@ -78,11 +90,11 @@ export default function Dashboard({ user, lang, setLang, onLogout }) {
     } finally {
       setLoading(false);
     }
-  }, [lang, onLogout]);
+  }, [lang, onLogout, isAdmin]);
 
   useEffect(() => { reload(); }, [reload]);
 
-  const shared = { lang, orders, requests, payments, tasks, portfolio, testimonials, reload, user };
+  const shared = { lang, orders, requests, payments, tasks, portfolio, testimonials, invoices, assignableStaff, reload, user };
 
   return (
     <div dir={lang === "ar" ? "rtl" : "ltr"} className="admin-shell" style={{ display: "grid", gridTemplateColumns: "220px 1fr", minHeight: "100vh" }}>
@@ -97,7 +109,7 @@ export default function Dashboard({ user, lang, setLang, onLogout }) {
         </div>
 
         <div style={{ flex: 1 }}>
-          {SIDEBAR_ITEMS.filter((s) => !s.ceoOnly || user?.role === "ceo").map((s) => {
+          {SIDEBAR_ITEMS.filter((s) => (!s.ceoOnly || user?.role === "ceo") && (!s.hiddenForPartnerDev || !isPartnerOrDev)).map((s) => {
             const disabled = s.id === "messages"; // معطّل حالياً — سيعود مع الذكاء الاصطناعي
             const pendingCount = requests.filter((r) => (r.status || "pending") === "pending").length;
             const pendingTestimonials = testimonials.filter((r) => (r.status || "pending") === "pending").length;
@@ -166,9 +178,9 @@ export default function Dashboard({ user, lang, setLang, onLogout }) {
             {tab === "clients"  && <ClientsTab {...shared} />}
             {tab === "invoices" && <InvoicesTab {...shared} />}
             {tab === "revenue"  && <RevenueTab {...shared} />}
-            {tab === "kanban"   && <KanbanTab {...shared} />}
-            {tab === "portfolio" && <PortfolioTab {...shared} />}
-            {tab === "testimonials" && <TestimonialsTab {...shared} />}
+            {tab === "kanban"   && !isPartnerOrDev && <KanbanTab {...shared} />}
+            {tab === "portfolio" && !isPartnerOrDev && <PortfolioTab {...shared} />}
+            {tab === "testimonials" && !isPartnerOrDev && <TestimonialsTab {...shared} />}
             {tab === "messages" && (
               <Card style={{ padding: 28, color: C.muted, fontSize: 14, lineHeight: 1.8 }}>
                 💬 {t(lang, "dashboard.messagesDisabled")}
@@ -320,7 +332,7 @@ function TeamTab({ lang, currentUserId }) {
                   <Td style={{ color: "#fff", fontWeight: 600 }}>{member.name}</Td>
                   <Td style={{ direction: "ltr", textAlign: lang === "ar" ? "right" : "left" }}>{member.email}</Td>
                   <Td style={{ direction: "ltr", textAlign: lang === "ar" ? "right" : "left" }}>{member.phone || "—"}</Td>
-                  <Td><Badge label={t(lang, `dashboard.roles.${member.role}`)} color={member.role === "ceo" ? C.accent : member.role === "admin" ? "#F59E0B" : C.muted} /></Td>
+                  <Td><Badge label={t(lang, `dashboard.roles.${member.role}`)} color={member.role === "ceo" ? C.accent : member.role === "admin" ? "#F59E0B" : member.role === "partner" ? "#38BDF8" : C.muted} /></Td>
                   <Td style={{ fontSize: 13, color: member.mustChangePassword ? C.yellow : C.muted }}>
                     {member.mustChangePassword ? t(lang, "dashboard.team.pendingFirstLogin") : t(lang, "dashboard.team.active")}
                   </Td>
@@ -386,6 +398,7 @@ function StaffForm({ lang, onCreated }) {
       <label style={{ fontSize: 13, color: C.muted, display: "block", marginBottom: 6 }}>{t(lang, "dashboard.team.form.role")}</label>
       <select value={role} onChange={(e) => setRole(e.target.value)} style={{ ...inputStyle, marginBottom: 18 }}>
         <option value="developer">{t(lang, "dashboard.roles.developer")}</option>
+        <option value="partner">{t(lang, "dashboard.roles.partner")}</option>
         <option value="admin">{t(lang, "dashboard.roles.admin")}</option>
       </select>
 
@@ -498,16 +511,34 @@ const inputStyle = {
 };
 
 // ── OVERVIEW ──────────────────────────────────────────────────────────────────
-function OverviewTab({ lang, orders, requests, user, goTab }) {
+function openBalanceOf(orders, invoices, userId) {
+  const uid = String(userId);
+  const earned = orders.reduce((s, o) => {
+    const pct = String(o.partnerId) === uid ? o.partnerPct : String(o.developerId) === uid ? o.developerPct : null;
+    return pct ? s + (Number(o.amountPaid) || 0) * (Number(pct) / 100) : s;
+  }, 0);
+  const paidOut = invoices
+    .filter((i) => i.category === "salary" && String(i.userId) === uid)
+    .reduce((s, i) => s + (Number(i.amount) || 0), 0);
+  return earned - paidOut;
+}
+
+function OverviewTab({ lang, orders, requests, invoices, user, goTab }) {
+  const isPartnerOrDev = user?.role === "partner" || user?.role === "developer";
   const active = orders.filter((o) => o.status !== "delivered");
   const delivered = orders.filter((o) => o.status === "delivered");
   const openBalances = orders.filter((o) => remainingOf(o) > 0);
   const metricLabels = t(lang, "dashboard.metrics");
+  // Partners/Developers get their own commission open balance (money attributed
+  // to their name) in the 4th slot instead of the count of client balances.
+  const fourthMetric = isPartnerOrDev
+    ? [`💵`, t(lang, "dashboard.openBalance"), fmtMoney(openBalanceOf(orders, invoices, user.id), lang)]
+    : ["🧾", metricLabels[3], openBalances.length];
   const metrics = [
     ["🟢", metricLabels[0], active.length],
     ["✅", metricLabels[1], delivered.length],
     ["📥", metricLabels[2], requests.length],
-    ["🧾", metricLabels[3], openBalances.length],
+    fourthMetric,
   ];
   const latest = active[0] || orders[0];
 
@@ -518,7 +549,7 @@ function OverviewTab({ lang, orders, requests, user, goTab }) {
           <div style={{ fontFamily: "Syne, sans-serif", fontWeight: 800, fontSize: 26, color: "#fff" }}>{t(lang, "dashboard.welcome").replace("{name}", user?.name || "")}</div>
           <div style={{ color: C.muted, fontSize: 14, marginTop: 4 }}>{t(lang, "dashboard.overviewSubtitle").replace("{count}", active.length)}</div>
         </div>
-        <Btn onClick={() => goTab("projects")}>{t(lang, "dashboard.newOrder")}</Btn>
+        {!isPartnerOrDev && <Btn onClick={() => goTab("projects")}>{t(lang, "dashboard.newOrder")}</Btn>}
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: 16, marginBottom: 28 }}>
@@ -562,8 +593,9 @@ function OverviewTab({ lang, orders, requests, user, goTab }) {
 }
 
 // ── PROJECTS (ORDERS) ─────────────────────────────────────────────────────────
-function ProjectsTab({ lang, orders, reload, user }) {
-  const canManage = user?.role !== "developer";
+function ProjectsTab({ lang, orders, reload, user, assignableStaff }) {
+  const isAdmin = user?.role === "ceo" || user?.role === "admin";
+  const canManage = isAdmin; // create / delete orders, assign partner & developer
   const [showForm, setShowForm] = useState(false);
   const [created, setCreated] = useState(null); // { order, privateKey }
   const [search, setSearch] = useState("");
@@ -614,7 +646,7 @@ function ProjectsTab({ lang, orders, reload, user }) {
       )}
 
       {filtered.map((order) => (
-        <OrderCard key={order.id} order={order} lang={lang} reload={reload} canManage={canManage} />
+        <OrderCard key={order.id} order={order} lang={lang} reload={reload} user={user} canManage={canManage} isAdmin={isAdmin} assignableStaff={assignableStaff} />
       ))}
     </div>
   );
@@ -752,7 +784,8 @@ function KeyModal({ lang, data, onClose, titleKey = "dashboard.keyModal.title", 
   );
 }
 
-function OrderCard({ order, lang, reload, canManage }) {
+function OrderCard({ order, lang, reload, user, canManage, isAdmin, assignableStaff = [] }) {
+  const canEdit = user?.role !== "partner"; // admin & developer can edit status/progress/features; partner is read-only
   const [status, setStatus] = useState(order.status);
   const [pct, setPct] = useState(order.progressPct);
   const [expanded, setExpanded] = useState(false);
@@ -761,11 +794,30 @@ function OrderCard({ order, lang, reload, canManage }) {
   const [payNote, setPayNote] = useState("");
   const [features, setFeatures] = useState([]);
   const [budgetInput, setBudgetInput] = useState("");
+  const [partnerId, setPartnerId] = useState(order.partnerId || "");
+  const [partnerPct, setPartnerPct] = useState(order.partnerPct ?? "");
+  const [developerId, setDeveloperId] = useState(order.developerId || "");
+  const [developerPct, setDeveloperPct] = useState(order.developerPct ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [newKey, setNewKey] = useState(null); // { order, privateKey } after regenerating
 
   const stages = STAGE_SETS[order.kind] || STAGE_SETS.new;
+  const partners = assignableStaff.filter((s) => s.role === "partner");
+  const developers = assignableStaff.filter((s) => s.role === "developer");
+
+  const assignmentDirty = isAdmin && (
+    String(partnerId || "") !== String(order.partnerId || "") || Number(partnerPct || 0) !== Number(order.partnerPct || 0)
+    || String(developerId || "") !== String(order.developerId || "") || Number(developerPct || 0) !== Number(order.developerPct || 0)
+  );
+
+  const saveAssignment = () => act(async () => {
+    await api(`/orders/${order.id}`, {
+      method: "PUT",
+      body: { partnerId: partnerId || null, partnerPct: Number(partnerPct) || 0, developerId: developerId || null, developerPct: Number(developerPct) || 0 },
+    });
+    await reload();
+  });
 
   const dirty = status !== order.status || Number(pct) !== order.progressPct;
 
@@ -856,13 +908,17 @@ function OrderCard({ order, lang, reload, canManage }) {
 
       {/* Controls */}
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-        <select value={status} onChange={(e) => setStatus(e.target.value)} style={{ ...inputStyle, width: "auto" }}>
-          {stages.map((s) => <option key={s} value={s}>{t(lang, `dashboard.projectStages.${s}`)}</option>)}
-          <option value="delivered">✅ {t(lang, "dashboard.projectStages.delivered")}</option>
-        </select>
-        <input type="number" min="0" max="100" value={pct} onChange={(e) => setPct(e.target.value)} style={{ ...inputStyle, width: 80 }} />
-        <span style={{ color: C.muted, fontSize: 13 }}>%</span>
-        {dirty && <Btn onClick={save} style={{ opacity: busy ? 0.6 : 1 }}>{t(lang, "dashboard.save")}</Btn>}
+        {canEdit && (
+          <>
+            <select value={status} onChange={(e) => setStatus(e.target.value)} style={{ ...inputStyle, width: "auto" }}>
+              {stages.map((s) => <option key={s} value={s}>{t(lang, `dashboard.projectStages.${s}`)}</option>)}
+              <option value="delivered">✅ {t(lang, "dashboard.projectStages.delivered")}</option>
+            </select>
+            <input type="number" min="0" max="100" value={pct} onChange={(e) => setPct(e.target.value)} style={{ ...inputStyle, width: 80 }} />
+            <span style={{ color: C.muted, fontSize: 13 }}>%</span>
+            {dirty && <Btn onClick={save} style={{ opacity: busy ? 0.6 : 1 }}>{t(lang, "dashboard.save")}</Btn>}
+          </>
+        )}
         <Btn variant="outline" onClick={toggleDetails}>{expanded ? t(lang, "dashboard.hideDetails") : t(lang, "dashboard.details")}</Btn>
         {canManage && (
           <button onClick={remove} style={{ background: "transparent", border: "1px solid rgba(239,68,68,.4)", borderRadius: 10, padding: "10px 16px", color: "#EF4444", fontSize: 13, cursor: "pointer", fontFamily: "Inter, sans-serif" }}>
@@ -895,11 +951,40 @@ function OrderCard({ order, lang, reload, canManage }) {
           {canManage && <MiniBtn onClick={regenerateKey}>{t(lang, "dashboard.regenerateKey.button")}</MiniBtn>}
           <div style={{ marginBottom: 16 }} />
 
+          {isAdmin && (
+            <div style={{ marginBottom: 20, padding: 16, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", marginBottom: 12 }}>{t(lang, "dashboard.partnership.assignTitle")}</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 12 }}>
+                <div>
+                  <label style={{ fontSize: 12, color: C.muted, display: "block", marginBottom: 6 }}>{t(lang, "dashboard.partnership.partner")}</label>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <select value={partnerId} onChange={(e) => setPartnerId(e.target.value)} style={{ ...inputStyle, flex: 2 }}>
+                      <option value="">—</option>
+                      {partners.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                    <input type="number" min="0" max="100" placeholder="%" value={partnerPct} onChange={(e) => setPartnerPct(e.target.value)} style={{ ...inputStyle, width: 70 }} />
+                  </div>
+                </div>
+                <div>
+                  <label style={{ fontSize: 12, color: C.muted, display: "block", marginBottom: 6 }}>{t(lang, "dashboard.partnership.developer")}</label>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <select value={developerId} onChange={(e) => setDeveloperId(e.target.value)} style={{ ...inputStyle, flex: 2 }}>
+                      <option value="">—</option>
+                      {developers.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+                    </select>
+                    <input type="number" min="0" max="100" placeholder="%" value={developerPct} onChange={(e) => setDeveloperPct(e.target.value)} style={{ ...inputStyle, width: 70 }} />
+                  </div>
+                </div>
+              </div>
+              {assignmentDirty && <Btn onClick={saveAssignment} style={{ marginTop: 12, opacity: busy ? 0.6 : 1 }}>{t(lang, "dashboard.save")}</Btn>}
+            </div>
+          )}
+
           <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", marginBottom: 8 }}>{t(lang, "dashboard.featuresTitle")}</div>
           {features.map((f, i) => (
             <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
-              <button onClick={() => canManage && toggleFeatureDone(i)} style={{ background: "transparent", border: "none", cursor: canManage ? "pointer" : "default", fontSize: 15 }}>{f.done ? "✅" : "◻️"}</button>
-              {canManage ? (
+              <button onClick={() => canEdit && toggleFeatureDone(i)} style={{ background: "transparent", border: "none", cursor: canEdit ? "pointer" : "default", fontSize: 15 }}>{f.done ? "✅" : "◻️"}</button>
+              {canEdit ? (
                 <>
                   <input placeholder={t(lang, "dashboard.orderForm.featureName")} value={f.name} onChange={setFeatureField(i, "name")} style={{ ...inputStyle, flex: 2 }} />
                   <input placeholder={t(lang, "dashboard.orderForm.featurePrice")} type="number" value={f.price} onChange={setFeatureField(i, "price")} style={{ ...inputStyle, flex: 1 }} />
@@ -910,7 +995,7 @@ function OrderCard({ order, lang, reload, canManage }) {
               )}
             </div>
           ))}
-          {canManage && (
+          {canEdit && (
             <>
               <button onClick={addFeatureRow}
                 style={{ background: "transparent", border: `1px dashed ${C.border}`, borderRadius: 8, color: C.muted, cursor: "pointer", padding: "8px 14px", fontSize: 13, marginBottom: 12 }}>
@@ -952,8 +1037,8 @@ function OrderCard({ order, lang, reload, canManage }) {
 const REQUEST_STATUS_COLORS = { pending: "#F59E0B", approved: "#22C55E", cancelled: "#EF4444" };
 const REQUEST_KIND_COLORS = { new: "#6C63FF", debugging: "#EF4444", developing: "#F59E0B" };
 
-function RequestsTab({ lang, requests, reload, user }) {
-  const canManage = user?.role !== "developer";
+function RequestsTab({ lang, requests, reload, user, assignableStaff }) {
+  const canManage = user?.role === "ceo" || user?.role === "admin";
   const [viewing, setViewing] = useState(null);     // request shown in the read-only details modal
   const [approving, setApproving] = useState(null); // request shown in the approve modal
   const [created, setCreated] = useState(null);     // { order, privateKey } after approval
@@ -1020,6 +1105,7 @@ function RequestsTab({ lang, requests, reload, user }) {
         <ApproveRequestModal
           lang={lang}
           request={approving}
+          assignableStaff={assignableStaff}
           optLabel={(group, value) => optLabel(group, value, approving.currency)}
           onClose={() => setApproving(null)}
           onApproved={async (data) => { setApproving(null); setCreated(data); await reload(); }}
@@ -1129,10 +1215,10 @@ function RequestDetailsModal({ lang, request, optLabel, busy, canManage = true, 
             </>
           )}
           {canManage && status === "cancelled" && (
-            <>
-              <Btn onClick={onRestore} style={{ opacity: busy ? 0.6 : 1 }}>{t(lang, "dashboard.requestActions.restore")}</Btn>
-              <Btn variant="outline" onClick={onDelete} style={{ opacity: busy ? 0.6 : 1, color: "#EF4444" }}>{t(lang, "dashboard.requestActions.delete")}</Btn>
-            </>
+            <Btn onClick={onRestore} style={{ opacity: busy ? 0.6 : 1 }}>{t(lang, "dashboard.requestActions.restore")}</Btn>
+          )}
+          {canManage && (
+            <Btn variant="outline" onClick={onDelete} style={{ opacity: busy ? 0.6 : 1, color: "#EF4444" }}>{t(lang, "dashboard.requestActions.delete")}</Btn>
           )}
           <Btn variant="outline" onClick={onClose}>{t(lang, "dashboard.requestActions.close")}</Btn>
         </div>
@@ -1143,7 +1229,7 @@ function RequestDetailsModal({ lang, request, optLabel, busy, canManage = true, 
 
 // نافذة قبول الطلب: تعرض كل التفاصيل قابلة للتعديل، ثم تُنشئ المشروع
 // وتضيف العميل إلى CRM (المشاريع هي مصدر بيانات CRM) وتُظهر مفتاح التتبع.
-function ApproveRequestModal({ lang, request, optLabel, onClose, onApproved }) {
+function ApproveRequestModal({ lang, request, optLabel, assignableStaff = [], onClose, onApproved }) {
   const [kind, setKind] = useState(request.kind || "new");
   const [projectType, setProjectType] = useState(request.projectType ? optLabel("type", request.projectType) : "");
   const [description, setDescription] = useState([
@@ -1152,8 +1238,15 @@ function ApproveRequestModal({ lang, request, optLabel, onClose, onApproved }) {
     request.note,
   ].filter(Boolean).join("\n"));
   const [budget, setBudget] = useState("");
+  const [partnerId, setPartnerId] = useState("");
+  const [partnerPct, setPartnerPct] = useState("");
+  const [developerId, setDeveloperId] = useState("");
+  const [developerPct, setDeveloperPct] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+
+  const partners = assignableStaff.filter((s) => s.role === "partner");
+  const developers = assignableStaff.filter((s) => s.role === "developer");
 
   const approve = async () => {
     setBusy(true);
@@ -1161,7 +1254,11 @@ function ApproveRequestModal({ lang, request, optLabel, onClose, onApproved }) {
     try {
       const data = await api(`/requests/${request.id}/approve`, {
         method: "POST",
-        body: { kind, projectType, description, totalBudget: Number(budget) || 0 },
+        body: {
+          kind, projectType, description, totalBudget: Number(budget) || 0,
+          partnerId: partnerId || null, partnerPct: Number(partnerPct) || 0,
+          developerId: developerId || null, developerPct: Number(developerPct) || 0,
+        },
       });
       onApproved(data);
     } catch (err) {
@@ -1210,6 +1307,30 @@ function ApproveRequestModal({ lang, request, optLabel, onClose, onApproved }) {
 
         <label style={{ fontSize: 13, color: C.muted, display: "block", marginBottom: 6 }}>{t(lang, "dashboard.orderForm.budget")}</label>
         <input type="number" value={budget} onChange={(e) => setBudget(e.target.value)} style={{ ...inputStyle, marginBottom: 18 }} />
+
+        <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", marginBottom: 10 }}>{t(lang, "dashboard.partnership.assignTitle")} <span style={{ color: C.dim, fontWeight: 400 }}>({t(lang, "dashboard.partnership.optional")})</span></div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 12, marginBottom: 18 }}>
+          <div>
+            <label style={{ fontSize: 12, color: C.muted, display: "block", marginBottom: 6 }}>{t(lang, "dashboard.partnership.partner")}</label>
+            <div style={{ display: "flex", gap: 8 }}>
+              <select value={partnerId} onChange={(e) => setPartnerId(e.target.value)} style={{ ...inputStyle, flex: 2 }}>
+                <option value="">—</option>
+                {partners.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+              <input type="number" min="0" max="100" placeholder="%" value={partnerPct} onChange={(e) => setPartnerPct(e.target.value)} style={{ ...inputStyle, width: 70 }} />
+            </div>
+          </div>
+          <div>
+            <label style={{ fontSize: 12, color: C.muted, display: "block", marginBottom: 6 }}>{t(lang, "dashboard.partnership.developer")}</label>
+            <div style={{ display: "flex", gap: 8 }}>
+              <select value={developerId} onChange={(e) => setDeveloperId(e.target.value)} style={{ ...inputStyle, flex: 2 }}>
+                <option value="">—</option>
+                {developers.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+              </select>
+              <input type="number" min="0" max="100" placeholder="%" value={developerPct} onChange={(e) => setDeveloperPct(e.target.value)} style={{ ...inputStyle, width: 70 }} />
+            </div>
+          </div>
+        </div>
 
         {error && <div style={{ color: "#F87171", fontSize: 13, marginBottom: 12 }}>{error}</div>}
 
@@ -1261,22 +1382,37 @@ function ClientsTab({ lang, orders }) {
   );
 }
 
-// ── INVOICES (PAYMENTS) ───────────────────────────────────────────────────────
-function InvoicesTab({ lang, orders, payments, reload, user }) {
-  const canManage = user?.role !== "developer";
+// ── INVOICES (GENERAL LEDGER) ─────────────────────────────────────────────────
+const INVOICE_CATEGORIES = ["payment", "salary", "income", "expense"];
+const INVOICE_CATEGORY_COLORS = { payment: "#38BDF8", salary: "#6C63FF", income: "#22C55E", expense: "#EF4444" };
+
+function InvoicesTab({ lang, orders, invoices, assignableStaff = [], reload, user }) {
+  const canManage = user?.role === "ceo" || user?.role === "admin";
+  const isPartnerOrDev = user?.role === "partner" || user?.role === "developer";
+  const [category, setCategory] = useState("payment");
   const [orderId, setOrderId] = useState("");
+  const [personId, setPersonId] = useState("");
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
+  const selectedPerson = assignableStaff.find((s) => String(s.id) === String(personId));
+  const personBalance = selectedPerson ? openBalanceOf(orders, invoices, selectedPerson.id) : null;
+
+  const canSubmit = amount && (category !== "payment" || orderId) && (category !== "salary" || personId);
+
   const record = async () => {
-    if (!orderId || !amount) return;
+    if (!canSubmit) return;
     setBusy(true);
     setError("");
     try {
-      await api(`/orders/${orderId}/payments`, { method: "POST", body: { amount: Number(amount), note } });
-      setAmount(""); setNote("");
+      if (category === "payment") {
+        await api(`/orders/${orderId}/payments`, { method: "POST", body: { amount: Number(amount), note } });
+      } else {
+        await api("/invoices", { method: "POST", body: { category, amount: Number(amount), note, userId: category === "salary" ? personId : undefined } });
+      }
+      setAmount(""); setNote(""); setOrderId(""); setPersonId("");
       await reload();
     } catch (err) {
       setError(err.status ? err.message : t(lang, "auth.connectionError"));
@@ -1284,71 +1420,197 @@ function InvoicesTab({ lang, orders, payments, reload, user }) {
     setBusy(false);
   };
 
+  // My own salary payouts vs. the payments on orders attributed to me — shown
+  // as two separate lists so it's clear which money is personal commission
+  // already paid out, and which is the client's payment on the project itself.
+  const mySalaryInvoices = invoices.filter((inv) => inv.category === "salary" && String(inv.userId) === String(user?.id));
+  const myProjectInvoices = invoices.filter((inv) => inv.category === "payment");
+  const myEarned = orders.reduce((s, o) => {
+    const uid = String(user?.id);
+    const pct = String(o.partnerId) === uid ? o.partnerPct : String(o.developerId) === uid ? o.developerPct : null;
+    return pct ? s + (Number(o.amountPaid) || 0) * (Number(pct) / 100) : s;
+  }, 0);
+  const myPaidOut = mySalaryInvoices.reduce((s, i) => s + (Number(i.amount) || 0), 0);
+
   return (
     <div>
       <DashTitle>{t(lang, "dashboard.invoices")}</DashTitle>
 
+      {isPartnerOrDev && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: 16, marginBottom: 20 }}>
+          <Card style={{ padding: 20 }}>
+            <div style={{ fontSize: 12, color: C.muted, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>{t(lang, "dashboard.partnership.earned")}</div>
+            <div style={{ fontFamily: "Syne, sans-serif", fontWeight: 800, fontSize: 22, color: "#fff" }}>{fmtMoney(myEarned, lang)}</div>
+          </Card>
+          <Card style={{ padding: 20 }}>
+            <div style={{ fontSize: 12, color: C.muted, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>{t(lang, "dashboard.partnership.categories.salary")}</div>
+            <div style={{ fontFamily: "Syne, sans-serif", fontWeight: 800, fontSize: 22, color: "#fff" }}>{fmtMoney(myPaidOut, lang)}</div>
+          </Card>
+          <Card style={{ padding: 20 }}>
+            <div style={{ fontSize: 12, color: C.muted, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>{t(lang, "dashboard.openBalance")}</div>
+            <div style={{ fontFamily: "Syne, sans-serif", fontWeight: 800, fontSize: 22, color: C.green }}>{fmtMoney(myEarned - myPaidOut, lang)}</div>
+          </Card>
+        </div>
+      )}
+
       {canManage && (
         <Card style={{ padding: 20, marginBottom: 20 }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: "#fff", marginBottom: 12 }}>{t(lang, "dashboard.payments.recordPayment")}</div>
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <select value={orderId} onChange={(e) => setOrderId(e.target.value)} style={{ ...inputStyle, width: "auto", minWidth: 220 }}>
-              <option value="">{t(lang, "dashboard.payments.selectOrder")}</option>
-              {orders.map((o) => <option key={o.id} value={o.id}>{o.uid} — {o.clientName}</option>)}
-            </select>
+
+          <label style={{ fontSize: 13, color: C.muted, display: "block", marginBottom: 6 }}>{t(lang, "dashboard.partnership.category")}</label>
+          <select value={category} onChange={(e) => { setCategory(e.target.value); setOrderId(""); setPersonId(""); }} style={{ ...inputStyle, width: "auto", minWidth: 220, marginBottom: 12 }}>
+            {INVOICE_CATEGORIES.map((c) => <option key={c} value={c}>{t(lang, `dashboard.partnership.categories.${c}`)}</option>)}
+          </select>
+
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+            {category === "payment" && (
+              <select value={orderId} onChange={(e) => setOrderId(e.target.value)} style={{ ...inputStyle, width: "auto", minWidth: 220 }}>
+                <option value="">{t(lang, "dashboard.payments.selectOrder")}</option>
+                {orders.map((o) => <option key={o.id} value={o.id}>{o.uid} — {o.clientName}</option>)}
+              </select>
+            )}
+            {category === "salary" && (
+              <select value={personId} onChange={(e) => setPersonId(e.target.value)} style={{ ...inputStyle, width: "auto", minWidth: 220 }}>
+                <option value="">{t(lang, "dashboard.partnership.selectPerson")}</option>
+                {assignableStaff.map((s) => <option key={s.id} value={s.id}>{s.name} — {t(lang, `dashboard.roles.${s.role}`)}</option>)}
+              </select>
+            )}
             <input type="number" placeholder={t(lang, "dashboard.payments.amount")} value={amount} onChange={(e) => setAmount(e.target.value)} style={{ ...inputStyle, width: 140 }} />
             <input placeholder={t(lang, "dashboard.payments.note")} value={note} onChange={(e) => setNote(e.target.value)} style={{ ...inputStyle, width: 200 }} />
-            <Btn onClick={record} style={{ opacity: busy || !orderId || !amount ? 0.6 : 1 }}>{t(lang, "dashboard.payments.record")}</Btn>
+            <Btn onClick={record} style={{ opacity: busy || !canSubmit ? 0.6 : 1 }}>{t(lang, "dashboard.payments.record")}</Btn>
           </div>
+
+          {category === "salary" && selectedPerson && (
+            <div style={{ fontSize: 13, color: C.muted, marginTop: 10 }}>{t(lang, "dashboard.openBalance")}: <span style={{ color: C.green, fontWeight: 600 }}>{fmtMoney(personBalance, lang)}</span></div>
+          )}
+
           {error && <div style={{ color: "#F87171", fontSize: 13, marginTop: 10 }}>{error}</div>}
         </Card>
       )}
 
-      {payments.length === 0 ? (
-        <Card style={{ padding: 28, color: C.muted, fontSize: 14 }}>{t(lang, "dashboard.noPayments")}</Card>
+      {isPartnerOrDev ? (
+        <>
+          <div style={{ fontSize: 14, fontWeight: 700, color: "#fff", margin: "20px 0 10px" }}>{t(lang, "dashboard.partnership.categories.salary")}</div>
+          <InvoiceTable lang={lang} invoices={mySalaryInvoices} emptyKey="dashboard.noPayments" />
+
+          <div style={{ fontSize: 14, fontWeight: 700, color: "#fff", margin: "24px 0 10px" }}>{t(lang, "dashboard.partnership.categories.payment")}</div>
+          <InvoiceTable lang={lang} invoices={myProjectInvoices} emptyKey="dashboard.noPayments" />
+        </>
       ) : (
-        <Card style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr>
-                {["id", "project", "client", "amount", "note", "date", "enteredBy"].map((f) => (
-                  <Th key={f} lang={lang}>{t(lang, `dashboard.paymentsTable.${f}`)}</Th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {payments.map((p, i) => (
-                <tr key={p.id ?? i}>
-                  <Td style={{ color: C.accent, fontWeight: 600, direction: "ltr" }}>{p.orderUid}</Td>
-                  <Td>{p.projectType}</Td>
-                  <Td style={{ color: "#fff", fontWeight: 600 }}>{p.clientName}</Td>
-                  <Td style={{ color: C.green, fontWeight: 700 }}>{fmtMoney(p.amount, lang)}</Td>
-                  <Td style={{ fontSize: 13, color: C.muted }}>{p.note || "—"}</Td>
-                  <Td style={{ whiteSpace: "nowrap", fontSize: 13, color: C.muted }}>{fmtDate(p.createdAt)}</Td>
-                  <Td style={{ fontSize: 13, color: C.muted }}>{p.createdBy || "—"}</Td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </Card>
+        <InvoiceTable lang={lang} invoices={invoices} emptyKey="dashboard.noPayments" canManage={canManage} reload={reload} />
       )}
     </div>
   );
 }
 
+function InvoiceTable({ lang, invoices, emptyKey, canManage = false, reload }) {
+  const [busyId, setBusyId] = useState(null);
+  const [error, setError] = useState("");
+
+  const remove = async (inv) => {
+    if (!window.confirm(t(lang, "dashboard.requestActions.delete") + "?")) return;
+    setBusyId(inv.id);
+    setError("");
+    try {
+      await api(`/invoices/${inv.id}`, { method: "DELETE" });
+      await reload();
+    } catch (err) {
+      setError(err.status ? err.message : t(lang, "auth.connectionError"));
+    }
+    setBusyId(null);
+  };
+
+  if (invoices.length === 0) {
+    return <Card style={{ padding: 28, color: C.muted, fontSize: 14 }}>{t(lang, emptyKey)}</Card>;
+  }
+  return (
+    <Card style={{ overflowX: "auto" }}>
+      {error && <div style={{ color: "#F87171", fontSize: 13, padding: "10px 16px 0" }}>{error}</div>}
+      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <thead>
+          <tr>
+            {["category", "project", "amount", "note", "date", "enteredBy"].map((f) => (
+              <Th key={f} lang={lang}>{t(lang, `dashboard.paymentsTable.${f}`)}</Th>
+            ))}
+            {canManage && <Th lang={lang}>{t(lang, "dashboard.requestsTable.actions")}</Th>}
+          </tr>
+        </thead>
+        <tbody>
+          {invoices.map((inv) => (
+            <tr key={inv.id} style={{ opacity: busyId === inv.id ? 0.5 : 1 }}>
+              <Td><Badge label={t(lang, `dashboard.partnership.categories.${inv.category}`)} color={INVOICE_CATEGORY_COLORS[inv.category] || C.accent} /></Td>
+              <Td style={{ color: "#fff", fontWeight: 600 }}>
+                {inv.category === "payment" && inv.orderUid && <span style={{ direction: "ltr", unicodeBidi: "embed" }}>{inv.orderUid} — {inv.clientName}</span>}
+                {inv.category === "salary" && (inv.userName || "—")}
+                {(inv.category === "income" || inv.category === "expense") && "—"}
+              </Td>
+              <Td style={{ color: inv.category === "expense" ? "#EF4444" : C.green, fontWeight: 700 }}>{fmtMoney(inv.amount, lang)}</Td>
+              <Td style={{ fontSize: 13, color: C.muted }}>{inv.note || "—"}</Td>
+              <Td style={{ whiteSpace: "nowrap", fontSize: 13, color: C.muted }}>{fmtDate(inv.createdAt)}</Td>
+              <Td style={{ fontSize: 13, color: C.muted }}>{inv.createdBy || "—"}</Td>
+              {canManage && (
+                <Td>
+                  <MiniBtn onClick={() => remove(inv)} danger>{t(lang, "dashboard.requestActions.delete")}</MiniBtn>
+                </Td>
+              )}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </Card>
+  );
+}
+
 // ── REVENUE ───────────────────────────────────────────────────────────────────
-function RevenueTab({ lang, orders, payments }) {
+function RevenueTab({ lang, orders, payments, invoices, user }) {
+  const isPartnerOrDev = user?.role === "partner" || user?.role === "developer";
   const now = new Date();
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const sum = (list) => list.reduce((s, p) => s + (Number(p.amount) || 0), 0);
   const inMonth = (p, y, m) => {
     const d = parseDate(p.createdAt);
     return d && d.getFullYear() === y && d.getMonth() === m;
   };
+  const inRange = (p) => {
+    const d = fmtDate(p.createdAt);
+    if (dateFrom && d < dateFrom) return false;
+    if (dateTo && d > dateTo) return false;
+    return true;
+  };
 
-  const thisMonth = sum(payments.filter((p) => inMonth(p, now.getFullYear(), now.getMonth())));
-  const thisYear = sum(payments.filter((p) => parseDate(p.createdAt)?.getFullYear() === now.getFullYear()));
-  const total = sum(payments);
-  const outstanding = orders.reduce((s, o) => s + remainingOf(o), 0);
+  // Net Profit (Admin/CEO only) = project payments + general incomes − salary
+  // payouts − general expenses, across the whole ledger (or the selected period).
+  const netProfitOf = (list) => {
+    const by = (cat) => sum(list.filter((i) => i.category === cat));
+    return by("payment") + by("income") - by("salary") - by("expense");
+  };
+  const hasRange = dateFrom || dateTo;
+  const rangeInvoices = invoices.filter(inRange);
+  const mySalaryAll = invoices.filter((inv) => inv.category === "salary" && String(inv.userId) === String(user?.id));
+  const periodIncome = isPartnerOrDev ? sum(mySalaryAll.filter(inRange)) : sum(rangeInvoices.filter((i) => i.category === "payment" || i.category === "income"));
+  const periodNetProfit = isPartnerOrDev ? periodIncome : netProfitOf(rangeInvoices);
+
+  // Partners/Developers: "This month/year" reflects money actually paid out to
+  // them (salary invoices) — not the full client payment on the project, since
+  // only their % belongs to them. Admin/CEO keep the company-wide view.
+  let thisMonth, thisYear, total, outstanding, chartSource;
+  if (isPartnerOrDev) {
+    const mySalary = invoices.filter((inv) => inv.category === "salary" && String(inv.userId) === String(user?.id));
+    thisMonth = sum(mySalary.filter((p) => inMonth(p, now.getFullYear(), now.getMonth())));
+    thisYear = sum(mySalary.filter((p) => parseDate(p.createdAt)?.getFullYear() === now.getFullYear()));
+    total = sum(mySalary);
+    outstanding = openBalanceOf(orders, invoices, user.id);
+    chartSource = mySalary;
+  } else {
+    const orderIds = new Set(orders.map((o) => String(o.id)));
+    const scopedPayments = payments.filter((p) => orderIds.has(String(p.orderId)));
+    thisMonth = sum(scopedPayments.filter((p) => inMonth(p, now.getFullYear(), now.getMonth())));
+    thisYear = sum(scopedPayments.filter((p) => parseDate(p.createdAt)?.getFullYear() === now.getFullYear()));
+    total = sum(scopedPayments);
+    outstanding = orders.reduce((s, o) => s + remainingOf(o), 0);
+    chartSource = scopedPayments;
+  }
 
   // Last 6 months chart
   const months = [];
@@ -1356,7 +1618,7 @@ function RevenueTab({ lang, orders, payments }) {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
     months.push({
       label: d.toLocaleDateString(lang === "ar" ? "ar" : lang === "fr" ? "fr" : "en", { month: "short" }),
-      value: sum(payments.filter((p) => inMonth(p, d.getFullYear(), d.getMonth()))),
+      value: sum(chartSource.filter((p) => inMonth(p, d.getFullYear(), d.getMonth()))),
     });
   }
   const maxValue = Math.max(...months.map((m) => m.value), 1);
@@ -1364,9 +1626,12 @@ function RevenueTab({ lang, orders, payments }) {
   const summary = [
     [t(lang, "dashboard.revenueLabels.thisMonth"), thisMonth],
     [t(lang, "dashboard.revenueLabels.thisYear"), thisYear],
-    [t(lang, "dashboard.revenueLabels.outstanding"), outstanding],
-    [t(lang, "dashboard.revenueLabels.total"), total],
+    [isPartnerOrDev ? t(lang, "dashboard.openBalance") : t(lang, "dashboard.revenueLabels.outstanding"), outstanding],
+    [isPartnerOrDev ? t(lang, "dashboard.partnership.earned") : t(lang, "dashboard.revenueLabels.total"), isPartnerOrDev ? total + outstanding : total],
   ];
+  if (!isPartnerOrDev) {
+    summary.push([t(lang, "dashboard.revenueLabels.netProfit"), netProfitOf(invoices)]);
+  }
 
   return (
     <div>
@@ -1379,6 +1644,30 @@ function RevenueTab({ lang, orders, payments }) {
           </Card>
         ))}
       </div>
+
+      <Card style={{ padding: 22, marginBottom: 28 }}>
+        <div style={{ fontFamily: "Syne, sans-serif", fontWeight: 700, fontSize: 15, color: "#fff", marginBottom: 14 }}>{t(lang, "dashboard.revenueLabels.customPeriod")}</div>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: hasRange ? 18 : 0 }}>
+          <input type="date" lang="en-US" dir="ltr" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} style={{ ...inputStyle, width: "auto" }} />
+          <span style={{ color: C.muted, fontSize: 13 }}>→</span>
+          <input type="date" lang="en-US" dir="ltr" value={dateTo} onChange={(e) => setDateTo(e.target.value)} style={{ ...inputStyle, width: "auto" }} />
+          {hasRange && <MiniBtn onClick={() => { setDateFrom(""); setDateTo(""); }}>{t(lang, "dashboard.projectsFilter.statusAll")}</MiniBtn>}
+        </div>
+        {hasRange && (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 16 }}>
+            <div>
+              <div style={{ fontSize: 12, color: C.muted, marginBottom: 6, textTransform: "uppercase", letterSpacing: 1 }}>{t(lang, "dashboard.revenueLabels.periodIncome")}</div>
+              <div style={{ fontFamily: "Syne, sans-serif", fontWeight: 800, fontSize: 22, color: "#fff" }}>{fmtMoney(periodIncome, lang)}</div>
+            </div>
+            {!isPartnerOrDev && (
+              <div>
+                <div style={{ fontSize: 12, color: C.muted, marginBottom: 6, textTransform: "uppercase", letterSpacing: 1 }}>{t(lang, "dashboard.revenueLabels.netProfit")}</div>
+                <div style={{ fontFamily: "Syne, sans-serif", fontWeight: 800, fontSize: 22, color: C.green }}>{fmtMoney(periodNetProfit, lang)}</div>
+              </div>
+            )}
+          </div>
+        )}
+      </Card>
 
       <Card style={{ padding: 28 }}>
         <div style={{ fontFamily: "Syne, sans-serif", fontWeight: 700, fontSize: 17, color: "#fff", marginBottom: 28 }}>{t(lang, "dashboard.revenueChartTitle")}</div>

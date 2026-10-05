@@ -5,7 +5,7 @@
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { createUser, findUserByEmail, findUserById, updateUserPassword, deleteUserById, listStaff } from '../db.js';
+import { createUser, findUserByEmail, findUserById, updateUserPassword, deleteUserById, listStaff, listAssignableStaff } from '../db.js';
 
 const router = express.Router();
 
@@ -14,7 +14,7 @@ if (!JWT_SECRET) {
   throw new Error('JWT_SECRET must be set in backend/.env');
 }
 
-const STAFF_ROLES = ['ceo', 'admin', 'developer'];
+const STAFF_ROLES = ['ceo', 'admin', 'developer', 'partner'];
 
 export function requireStaff(req, res, next) {
   const token = req.headers.authorization?.split(' ')[1];
@@ -103,6 +103,11 @@ router.patch('/me/password', requireStaff, async (req, res) => {
 // CEO manages staff accounts
 router.get('/staff', requireCeo, async (_req, res) => {
   res.json({ staff: await listStaff() });
+});
+
+// Admin/CEO: partners & developers available for order assignment dropdowns.
+router.get('/staff/assignable', requireAdmin, async (_req, res) => {
+  res.json({ staff: await listAssignableStaff() });
 });
 
 router.post('/staff', requireCeo, async (req, res) => {

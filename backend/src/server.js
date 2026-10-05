@@ -7,6 +7,7 @@ import requestsRoutes from './routes/requests.js';
 import tasksRoutes from './routes/tasks.js';
 import portfolioRoutes from './routes/portfolio.js';
 import testimonialsRoutes from './routes/testimonials.js';
+import invoicesRoutes from './routes/invoices.js';
 import shareRoutes from './routes/share.js';
 import { initDb } from './db.js';
 
@@ -21,6 +22,7 @@ app.use('/api/requests', requestsRoutes);
 app.use('/api/tasks', tasksRoutes);
 app.use('/api/portfolio', portfolioRoutes);
 app.use('/api/testimonials', testimonialsRoutes);
+app.use('/api/invoices', invoicesRoutes);
 app.use(shareRoutes); // crawler-facing /projects/:slug OG tags — see infra Caddyfile routing
 
 const PORT = process.env.PORT || 4000;

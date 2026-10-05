@@ -18,7 +18,7 @@ import AdminLogin from "./pages/AdminLogin";
 import ForceChangePassword from "./pages/ForceChangePassword";
 
 const IS_ADMIN_PATH = window.location.pathname.startsWith("/solvix-dir");
-const STAFF_ROLES = ["ceo", "admin", "developer"];
+const STAFF_ROLES = ["ceo", "admin", "developer", "partner"];
 
 // A direct link to /projects/:slug opens that project's details page straight away.
 const PROJECT_PATH_MATCH = window.location.pathname.match(/^\/projects\/([^/]+)\/?$/);
